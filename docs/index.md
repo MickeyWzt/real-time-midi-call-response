@@ -2,7 +2,9 @@
 
 Code, paper, and verified summary outputs for **Real-Time MIDI Call-and-Response Generation Using Autoregressive Transformers**.
 
-[GitHub repository](https://github.com/MickeyWzt/real-time-midi-call-response) | [Paper PDF](../paper/Real_Time_MIDI_Call_and_Response_Generation_Using_Autoregressive_Transformers.pdf) | [Release archive](https://github.com/MickeyWzt/real-time-midi-call-response/releases)
+[GitHub repository](https://github.com/MickeyWzt/real-time-midi-call-response) | [Paper PDF](../paper/Real_Time_MIDI_Call_and_Response_Generation_Using_Autoregressive_Transformers.pdf) | [Zenodo DOI](https://doi.org/10.5281/zenodo.20838084) | [Release archive](https://github.com/MickeyWzt/real-time-midi-call-response/releases)
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20838084.svg)](https://doi.org/10.5281/zenodo.20838084)
 
 ![System overview](../paper/System_overview.png)
 
@@ -33,7 +35,7 @@ Large model weights, caches, generated MIDI responses, audio sample libraries, V
 
 ## Citation
 
-The release is prepared for Zenodo. Before the DOI is minted, cite the GitHub repository:
+The versioned software DOI is [10.5281/zenodo.20838084](https://doi.org/10.5281/zenodo.20838084). The all-versions concept DOI is [10.5281/zenodo.20838083](https://doi.org/10.5281/zenodo.20838083).
 
 ```bibtex
 @software{wang_hu_2026_realtime_midi_call_response,
@@ -41,8 +43,7 @@ The release is prepared for Zenodo. Before the DOI is minted, cite the GitHub re
   title = {Real-Time MIDI Call-and-Response Generation Using Autoregressive Transformers},
   year = {2026},
   version = {1.0.0},
-  url = {https://github.com/MickeyWzt/real-time-midi-call-response}
+  doi = {10.5281/zenodo.20838084},
+  url = {https://doi.org/10.5281/zenodo.20838084}
 }
 ```
-
-After Zenodo archives the release, use the versioned Zenodo DOI.

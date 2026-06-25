@@ -2,12 +2,13 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/MickeyWzt/real-time-midi-call-response)](https://github.com/MickeyWzt/real-time-midi-call-response/releases)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20838084.svg)](https://doi.org/10.5281/zenodo.20838084)
 
 Code and supporting materials for the paper **Real-Time MIDI Call-and-Response Generation Using Autoregressive Transformers** by Wang Zitong and Hu Sitong.
 
 This repository wraps an offline autoregressive symbolic-music Transformer for live MIDI call-and-response performance. The system listens to a human MIDI phrase, detects a likely phrase endpoint, generates a response with an Anticipatory Music Transformer backend, applies phrase-level musical control, and schedules MIDI playback with latency-aware buffering.
 
-The repository is prepared for GitHub Pages and Zenodo software archiving. After Zenodo ingests a GitHub release, cite the archived software DOI in addition to the paper.
+The repository is published through GitHub Pages and archived on Zenodo. Cite the versioned software DOI in addition to the paper: [10.5281/zenodo.20838084](https://doi.org/10.5281/zenodo.20838084). The all-versions concept DOI is [10.5281/zenodo.20838083](https://doi.org/10.5281/zenodo.20838083).
 
 ## Paper Summary
 
@@ -146,19 +147,16 @@ https://mickeywzt.github.io/real-time-midi-call-response/
 
 Use `CITATION.cff` for GitHub citation metadata. Zenodo release metadata is defined in `.zenodo.json`.
 
-Before the Zenodo DOI is minted:
-
 ```bibtex
 @software{wang_hu_2026_realtime_midi_call_response,
   author = {Wang, Zitong and Hu, Sitong},
   title = {Real-Time MIDI Call-and-Response Generation Using Autoregressive Transformers},
   year = {2026},
   version = {1.0.0},
-  url = {https://github.com/MickeyWzt/real-time-midi-call-response}
+  doi = {10.5281/zenodo.20838084},
+  url = {https://doi.org/10.5281/zenodo.20838084}
 }
 ```
-
-After Zenodo archives the GitHub release, replace the URL-only citation with the versioned Zenodo DOI.
 
 ## License
 

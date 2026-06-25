@@ -12,6 +12,7 @@ date-released: 2026-06-25
 license: MIT
 repository-code: "https://github.com/MickeyWzt/real-time-midi-call-response"
 url: "https://mickeywzt.github.io/real-time-midi-call-response/"
+doi: "10.5281/zenodo.20838084"
 abstract: "A real-time human-AI MIDI call-and-response system that adapts an offline autoregressive symbolic-music Transformer through MIDI-VAD phrase segmentation, asynchronous decoding, speculative preload, and phrase-level musical control."
 keywords:
   - symbolic music generation

@@ -20,3 +20,8 @@ Zenodo gives priority to `.zenodo.json` when both files exist.
 7. Update the README and GitHub Pages DOI badge after the DOI appears.
 
 GitHub release archiving creates a new Zenodo DOI for each release. Use the version DOI for exact reproducibility and the concept DOI for the project as a whole.
+
+## Current DOI
+
+- Version DOI: https://doi.org/10.5281/zenodo.20838084
+- Concept DOI: https://doi.org/10.5281/zenodo.20838083
