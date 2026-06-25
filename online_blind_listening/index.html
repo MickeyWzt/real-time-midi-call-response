@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI MIDI A/B Listening Test</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/soundfont-player@0.12.0/dist/soundfont-player.min.js"></script>
+    <script src="./public/config.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>AI MIDI A/B Listening Test</h1>
+          <p>Anonymous 5-minute study. Headphones recommended.</p>
+        </div>
+        <div class="status-pill" id="sheetStatus">Sheet: not configured</div>
+      </header>
+
+      <section class="intro" id="introPanel">
+        <div class="intro-copy">
+          <h2>Choose the response that sounds more natural.</h2>
+          <p>
+            You will hear 12 short A/B pairs. Each pair has one call clip and two response-only clips.
+            Please choose the response that fits the call better. No music background is required.
+          </p>
+        </div>
+        <label class="consent">
+          <input type="checkbox" id="consentInput" />
+          <span>I understand this is anonymous and my choices will be used for academic analysis.</span>
+        </label>
+        <button class="primary wide" id="startBtn" disabled>Start listening</button>
+      </section>
+
+      <section class="study hidden" id="studyPanel" aria-live="polite">
+        <div class="progress-row">
+          <div>
+            <span id="pairLabel">Pair 1 of 10</span>
+            <strong id="modeLabel">Listen, then choose.</strong>
+          </div>
+          <div class="progress-track" aria-hidden="true">
+            <div class="progress-fill" id="progressFill"></div>
+          </div>
+        </div>
+
+        <article class="clip-card call-card" id="cardCall">
+          <div class="clip-head">
+            <span class="clip-letter call-letter">Call</span>
+            <button class="play-btn" id="playCall" type="button">Play Call</button>
+          </div>
+          <p id="listenCall">Listen to the call first</p>
+        </article>
+
+        <div class="listen-grid">
+          <article class="clip-card" id="cardA">
+            <div class="clip-head">
+              <span class="clip-letter">A</span>
+              <button class="play-btn" id="playA" type="button">Play A</button>
+            </div>
+            <p id="listenA">Not played yet</p>
+          </article>
+
+          <article class="clip-card" id="cardB">
+            <div class="clip-head">
+              <span class="clip-letter">B</span>
+              <button class="play-btn" id="playB" type="button">Play B</button>
+            </div>
+            <p id="listenB">Not played yet</p>
+          </article>
+        </div>
+
+        <div class="choice-panel">
+          <div class="choice-copy">
+            <h2>Which response fits better?</h2>
+            <p>Compare A and B as responses to the call. You must choose one side.</p>
+          </div>
+          <div class="choice-buttons">
+            <button class="choice" data-choice="A" type="button">Choose A</button>
+            <button class="choice" data-choice="B" type="button">Choose B</button>
+          </div>
+        </div>
+
+        <div class="nav-row">
+          <button id="stopBtn" type="button">Stop</button>
+        </div>
+      </section>
+
+      <section class="finish hidden" id="finishPanel">
+        <h2>One last step</h2>
+        <p>Your A/B decisions are ready. Add two quick background details, then submit.</p>
+
+        <div class="form-grid">
+          <label>
+            Music background
+            <select id="musicBackground">
+              <option value="none">No formal music background</option>
+              <option value="listener">Music listener / hobbyist</option>
+              <option value="instrument">Instrument or vocal training</option>
+              <option value="production">Music production / composition</option>
+              <option value="professional">Professional or advanced music background</option>
+            </select>
+          </label>
+          <label>
+            Listening setup
+            <select id="headphones">
+              <option value="headphones">Headphones / earphones</option>
+              <option value="speakers">Speakers</option>
+              <option value="phone">Phone / laptop speakers</option>
+            </select>
+          </label>
+        </div>
+
+        <label>
+          Optional comment
+          <textarea id="comment" maxlength="600" placeholder="Anything you noticed?"></textarea>
+        </label>
+
+        <div class="submit-row">
+          <button class="primary wide" id="submitBtn" type="button">Submit results</button>
+          <button id="downloadBtn" type="button">Download backup JSON</button>
+        </div>
+        <p class="submit-message" id="submitMessage"></p>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

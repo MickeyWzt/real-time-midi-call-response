@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the archived Zenodo release or this repository."
+type: software
+title: "Real-Time MIDI Call-and-Response Generation Using Autoregressive Transformers"
+authors:
+  - family-names: Wang
+    given-names: Zitong
+  - family-names: Hu
+    given-names: Sitong
+version: 1.0.0
+date-released: 2026-06-25
+license: MIT
+repository-code: "https://github.com/MickeyWzt/real-time-midi-call-response"
+url: "https://mickeywzt.github.io/real-time-midi-call-response/"
+abstract: "A real-time human-AI MIDI call-and-response system that adapts an offline autoregressive symbolic-music Transformer through MIDI-VAD phrase segmentation, asynchronous decoding, speculative preload, and phrase-level musical control."
+keywords:
+  - symbolic music generation
+  - MIDI
+  - call-and-response
+  - Transformer
+  - temporal point process
+  - real-time interaction
+  - objective evaluation
+  - latency logging

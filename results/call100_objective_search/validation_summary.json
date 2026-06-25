@@ -1,0 +1,14 @@
+{
+  "created_at": "2026-06-19T03:32:46",
+  "expected_rows": 27000,
+  "actual_rows": 27000,
+  "expected_combo_count": 1800,
+  "actual_combo_count": 1800,
+  "trials_per_combo": 15,
+  "empty_objective_scores": 0,
+  "missing_response_midis": 0,
+  "unknown_call_ids": [],
+  "missing_call_ids": [],
+  "errors": [],
+  "status": "passed"
+}

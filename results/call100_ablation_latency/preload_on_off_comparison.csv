@@ -1,0 +1,2 @@
+ci95_high,ci95_low,comparison,mean_latency_reduction_ms,p_two_sided,paired_sample_count
+76.792700,74.723760,L1_preload_on_vs_L0_preload_off,75.768453,0.000000,9000

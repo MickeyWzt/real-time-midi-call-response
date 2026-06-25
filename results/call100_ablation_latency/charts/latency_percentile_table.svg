@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="210" viewBox="0 0 820 210">
+<rect width="100%" height="100%" fill="white"/>
+<text x="30" y="36" font-family="Arial" font-size="22" font-weight="700">Latency Percentiles</text>
+<text x="30" y="65" font-family="Arial" font-size="12" font-weight="700">condition</text>
+<text x="155" y="65" font-family="Arial" font-size="12" font-weight="700">p50_latency_ms</text>
+<text x="280" y="65" font-family="Arial" font-size="12" font-weight="700">p95_latency_ms</text>
+<text x="405" y="65" font-family="Arial" font-size="12" font-weight="700">p99_latency_ms</text>
+<text x="530" y="65" font-family="Arial" font-size="12" font-weight="700">max_latency_ms</text>
+<text x="655" y="65" font-family="Arial" font-size="12" font-weight="700">underrun_rate</text>
+<text x="30" y="99" font-family="Arial" font-size="12">L0_preload_off</text>
+<text x="155" y="99" font-family="Arial" font-size="12">136.455450</text>
+<text x="280" y="99" font-family="Arial" font-size="12">323.520665</text>
+<text x="405" y="99" font-family="Arial" font-size="12">479.574320</text>
+<text x="530" y="99" font-family="Arial" font-size="12">815.510000</text>
+<text x="655" y="99" font-family="Arial" font-size="12">0.207444</text>
+<text x="30" y="133" font-family="Arial" font-size="12">L1_preload_on</text>
+<text x="155" y="133" font-family="Arial" font-size="12">80.000000</text>
+<text x="280" y="133" font-family="Arial" font-size="12">80.000000</text>
+<text x="405" y="133" font-family="Arial" font-size="12">229.574320</text>
+<text x="530" y="133" font-family="Arial" font-size="12">565.510000</text>
+<text x="655" y="133" font-family="Arial" font-size="12">0.035556</text>
+</svg>

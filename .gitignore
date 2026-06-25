@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local runtime state
+hf_cache/
+hf_modules_cache/
+model_weights/
+downloads/
+logs/
+tmp/
+output/
+samples/
+responses/
+ratings.csv
+
+# Large or license-sensitive assets
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.wav
+*.mp3
+*.flac
+*.aiff
+*.zip
+*.7z
+*.rar
+*.exe
+*.dll
+*.vst3
+
+# Deployment-local config
+online_blind_listening/public/config.js
+.env
+.env.*
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

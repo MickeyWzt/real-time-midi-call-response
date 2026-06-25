@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="430" viewBox="0 0 900 430">
+<rect width="100%" height="100%" fill="white"/>
+<text x="30" y="36" font-family="Arial" font-size="22" font-weight="700">A0-A6 Mean Objective Score</text>
+<line x1="90" y1="330" x2="850" y2="330" stroke="#111827"/>
+<line x1="90" y1="60" x2="90" y2="330" stroke="#111827"/>
+<rect x="102.0" y="123.3" width="84.6" height="206.7" fill="#2563eb"/>
+<text x="144.3" y="354" text-anchor="middle" font-family="Arial" font-size="12">A0</text>
+<text x="144.3" y="117.3" text-anchor="middle" font-family="Arial" font-size="11">0.561</text>
+<rect x="210.6" y="118.4" width="84.6" height="211.6" fill="#2563eb"/>
+<text x="252.9" y="354" text-anchor="middle" font-family="Arial" font-size="12">A1</text>
+<text x="252.9" y="112.4" text-anchor="middle" font-family="Arial" font-size="11">0.574</text>
+<rect x="319.1" y="104.9" width="84.6" height="225.1" fill="#2563eb"/>
+<text x="361.4" y="354" text-anchor="middle" font-family="Arial" font-size="12">A2</text>
+<text x="361.4" y="98.9" text-anchor="middle" font-family="Arial" font-size="11">0.611</text>
+<rect x="427.7" y="93.9" width="84.6" height="236.1" fill="#2563eb"/>
+<text x="470.0" y="354" text-anchor="middle" font-family="Arial" font-size="12">A3</text>
+<text x="470.0" y="87.9" text-anchor="middle" font-family="Arial" font-size="11">0.641</text>
+<rect x="536.3" y="93.9" width="84.6" height="236.1" fill="#2563eb"/>
+<text x="578.6" y="354" text-anchor="middle" font-family="Arial" font-size="12">A4</text>
+<text x="578.6" y="87.9" text-anchor="middle" font-family="Arial" font-size="11">0.641</text>
+<rect x="644.9" y="68.7" width="84.6" height="261.3" fill="#2563eb"/>
+<text x="687.1" y="354" text-anchor="middle" font-family="Arial" font-size="12">A5</text>
+<text x="687.1" y="62.7" text-anchor="middle" font-family="Arial" font-size="11">0.709</text>
+<rect x="753.4" y="60.0" width="84.6" height="270.0" fill="#2563eb"/>
+<text x="795.7" y="354" text-anchor="middle" font-family="Arial" font-size="12">A6</text>
+<text x="795.7" y="54.0" text-anchor="middle" font-family="Arial" font-size="11">0.733</text>
+</svg>

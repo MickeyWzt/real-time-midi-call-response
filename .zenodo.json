@@ -1,0 +1,31 @@
+{
+  "title": "Real-Time MIDI Call-and-Response Generation Using Autoregressive Transformers",
+  "version": "1.0.0",
+  "upload_type": "software",
+  "access_right": "open",
+  "license": "mit",
+  "language": "eng",
+  "creators": [
+    {
+      "name": "Wang, Zitong",
+      "type": "Researcher"
+    },
+    {
+      "name": "Hu, Sitong",
+      "type": "Researcher"
+    }
+  ],
+  "description": "Code and supporting summary outputs for a real-time MIDI call-and-response system based on offline autoregressive Transformers, with MIDI-VAD phrase segmentation, asynchronous scheduling, speculative preload, phrase-level musical control, Call100 objective evaluation, A0-A6 ablation summaries, and latency logging summaries.",
+  "keywords": [
+    "symbolic music generation",
+    "MIDI",
+    "call-and-response",
+    "Transformer",
+    "temporal point process",
+    "real-time interaction",
+    "objective evaluation",
+    "latency logging",
+    "speculative preload"
+  ],
+  "notes": "This archive excludes model weights, Hugging Face caches, piano sample libraries, VST plugins, DAWs, generated MIDI responses, private study answer keys, and raw per-run output directories."
+}

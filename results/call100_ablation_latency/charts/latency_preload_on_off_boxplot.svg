@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="650" height="390" viewBox="0 0 650 390">
+<rect width="100%" height="100%" fill="white"/>
+<text x="30" y="36" font-family="Arial" font-size="22" font-weight="700">Preload On/Off First-Note Latency</text>
+<line x1="80" y1="300" x2="580" y2="300" stroke="#111827"/>
+<line x1="230" y1="264.1" x2="230" y2="204.8" stroke="#111827"/>
+<rect x="185" y="255.1" width="90" height="7.3" fill="#bfdbfe" stroke="#2563eb"/>
+<line x1="185" y1="259.8" x2="275" y2="259.8" stroke="#1d4ed8" stroke-width="2"/>
+<text x="230" y="328" text-anchor="middle" font-family="Arial" font-size="12">L0_preload_off</text>
+<text x="230" y="251.8" text-anchor="middle" font-family="Arial" font-size="11">p50 136 ms</text>
+<line x1="420" y1="276.5" x2="420" y2="276.5" stroke="#111827"/>
+<rect x="375" y="276.5" width="90" height="1.0" fill="#bfdbfe" stroke="#2563eb"/>
+<line x1="375" y1="276.5" x2="465" y2="276.5" stroke="#1d4ed8" stroke-width="2"/>
+<text x="420" y="328" text-anchor="middle" font-family="Arial" font-size="12">L1_preload_on</text>
+<text x="420" y="268.5" text-anchor="middle" font-family="Arial" font-size="11">p50 80 ms</text>
+</svg>

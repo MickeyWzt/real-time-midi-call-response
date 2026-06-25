@@ -1,0 +1,1169 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{url}
+\usepackage{float}
+\usepackage{CJKutf8}
+\usepackage[numbers]{natbib}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{
+  pdftitle={Real-Time MIDI Call-and-Response Generation Using Autoregressive Transformers},
+  pdfauthor={Wang Zitong, Hu Sitong},
+  pdfkeywords={symbolic music generation, MIDI, call-and-response, Transformer, temporal point process, real-time interaction, objective evaluation}
+}
+
+\title{Real-Time MIDI Call-and-Response Generation Using Autoregressive Transformers}
+\author{Wang Zitong, Hu Sitong}
+\date{June 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{CJK*}{UTF8}{gbsn}
+\begin{center}
+\textbf{摘\quad 要}
+\end{center}
+
+\noindent 本研究基于离线自回归 Transformer, 构建了一个面向现场即兴演奏的实时人机 MIDI ``Call-and-Response'' 共演系统。在硬实时部署场景中, 传统离线自回归 Transformer 面临四个核心瓶颈: 人机时钟不同步、缺乏动态乐句边界感知、推理延迟具有不确定性, 以及长序列生成退化。本文不修改底层模型参数, 而是通过连续时间事件流表示、动态 MIDI-VAD 乐句分割算法、异步多线程解码流水线和乐句级后处理控制层, 系统性地缓解上述问题。为评估系统性能, 本研究构建并使用 Call100 评估数据集进行了大规模测试, 共包含 27,000 个客观实验样本。实验结果表明, 与未加约束的原始模型相比, 所提出的受控 Transformer 框架能够显著减少序列退化, 在保持生成完整性和提升工程可靠性之间取得了较稳健的技术平衡。
+
+\vspace{0.5em}
+\noindent\textbf{关键词:} 符号音乐生成; MIDI; 问答式生成; Transformer; 时间点过程; 实时交互; 客观评估
+\end{CJK*}
+
+\vspace{1em}
+
+\begin{abstract}
+This study develops a real-time human-AI MIDI "Call-and-Response" co-performance system for live improvisation based on offline autoregressive Transformers. When deployed in hard real-time scenarios, traditional offline autoregressive Transformers face four core bottlenecks: human-machine clock desynchronization, a lack of dynamic phrase-boundary perception, non-deterministic inference latencies, and long-sequence generation degradation. Without modifying the underlying model parameters, this study systematically mitigates these bottlenecks by introducing a continuous-time event stream representation, a dynamic MIDI-VAD phrase segmentation algorithm, an asynchronous multi-threaded decoding pipeline, and a phrase-level post-processing control layer. To evaluate performance, this study conducts comprehensive testing on the newly constructed Call100 evaluation dataset, which comprises 27,000 objective trial samples. Experimental results demonstrate that the proposed controlled Transformer framework significantly reduces sequence degradation compared to the unconstrained raw model, successfully striking a robust technical balance between maintaining generation integrity and enhancing engineering reliability.
+\end{abstract}
+
+
+\noindent\textbf{Keywords:} symbolic music generation; MIDI; call-and-response; Transformer; temporal point process; real-time interaction; objective evaluation
+
+\section{Introduction}
+In musical co-performance, ``Call-and-Response'' serves as a foundational interaction paradigm for real-time live improvisation. To implement this paradigm computationally, symbolic music generation models have experienced a gradual transition from traditional rule-based and Markov chain methods toward modern generative architectures centered on deep neural networks.
+
+Among these architectures, deep autoregressive Transformers have become the core methodology for current symbolic music generation, owing to their exceptional capability to capture complex chromatic syntax in offline generation tasks. However, their non-real-time computational paradigms are inherently mismatched with the stringent temporal constraints of live performance.
+
+When deploying these offline models directly into real-time interaction scenarios, this underlying structural discrepancy introduces a series of runtime bottlenecks. First, the system struggles to maintain dynamic synchronization with the physical performance clock of the human musician in the absence of global alignment labels, leading to human-machine clock desynchronization. Second, due to a lack of real-time perception of phrase boundaries, the system cannot accurately capture the natural pauses in human performance, which easily triggers premature truncations or endless passive waiting. Furthermore, random playback disconnections and lag caused by the non-deterministic inference latency spikes inherent in autoregressive mechanisms severely degrade the generation quality. In addition, during extended generations within high-entropy open environments, the model is highly susceptible to severe structural degradation of the generated sequence. Therefore, mitigating these runtime bottlenecks through external engineering architectures and control layers—without modifying the underlying model parameters—has become the core challenge in advancing interactive AI music systems toward practical artistic viability.
+
+To systematically address these scientific problems, this study designs and implements a locally deployed, closed-loop human-AI co-performance system, delivering core contributions across four primary dimensions: data representation, phrase segmentation, system streaming, and control evaluation.
+
+
+\section{Related Work}
+
+To systematically address the four runtime deployment bottlenecks outlined in Section~1—namely temporal desynchronization, phrase boundary omission, non-deterministic inference latencies, and sequence degradation—this section provides a critical review of existing literature. We examine the theoretical mechanisms and technical limitations of prior works across four dimensions: symbolic music representations, generative sequence models, real-time interactive systems, and generative evaluation frameworks, thereby identifying the specific literature gaps that motivate our proposed architecture.
+
+\subsection{Symbolic Music Representation}
+
+
+While early symbolic music generation heavily relied on piano-rolls or fixed time-step grids, this rigid quantization introduces severe matrix sparsity and may discard micro-timing deviations such as rubato and swing dynamics \citep{boulanger2012modeling}. To preserve performance expressivity, subsequent studies shifted toward event-based symbolic representations, such as MIDI-like token streams with \verb|Note-On|, \verb|Note-Off|, and relative \verb|Time-Shift| events \citep{oore2020feeling,huang2018musictransformer}. Recent work on the Anticipatory Music Transformer further frames symbolic music generation through temporal point-process events and asynchronous controls \citep{thickstun2023amt}.
+
+\subsection{Sequence Models for Music Generation}
+
+Symbolic music generation has transitioned from memoryless or recurrent sequence models such as LSTMs \citep{eck2002finding} to self-attention-based Transformer architectures \citep{vaswani2017attention,huang2018musictransformer}. The Anticipatory Music Transformer extends this line of work toward controllable symbolic music generation with temporal-event representations \citep{thickstun2023amt}. However, these models are primarily optimized for offline or dataset-driven generation rather than live co-performance, where endpoint detection, turn scheduling, and latency stability become central engineering constraints.
+
+\subsection{Real-Time Human-AI Co-Performance}
+
+Real-time human-AI co-performance systems are not judged solely by generation quality; they must also robustly handle input capture, turn-taking, latency, and temporal synchronization. Prior work on real-time MIDI performance emphasizes the importance of latency and timing stability in interactive musical systems \citep{nelson2004midi}. In interactive music engineering, systems such as Scramble Live show how MIDI-oriented tools can combine learned models with live performance control in Max/MSP-style environments \citep{privato2022scramble}. More recent work also explores Max/MSP front ends coupled with Python-based generative back ends for real-time human-AI musical co-performance \citep{karchkhadze2026towards}. To bridge this deployment gap, this study focuses on virtual MIDI routing buses combined with a multi-threaded asynchronous scheduling architecture.
+
+\subsection{Evaluation of Generative Music}
+
+While human listening tests remain vital for evaluating musical quality, they are expensive and difficult to scale. Prior surveys emphasize that objective metrics for symbolic and generative music are useful for reproducible structural analysis, but they cannot fully replace perceptual or human-centered evaluation \citep{ji2023survey,lerch2025evaluation}.
+
+\section{Temporal Point Process Modeling and Autoregressive Generation}
+
+\subsection{Continuous-Time MIDI Event Representation}
+
+Symbolic music is commonly represented using piano-roll representations or fixed time-step grids. However, such quantized representations can lead to sparse matrices and may obscure the micro-timing deviations that are common in human improvisation. 
+To address this issue, this study draws on the idea of temporal point processes and represents music as a stream of discrete events arriving on a continuous time axis.
+\begin{equation}
+E = \{e_1, e_2, \ldots, e_N\}.
+\end{equation}
+Each event $e_i$ is represented as a triplet:
+\begin{equation}
+e_i = (t_i, d_i, p_i),
+\end{equation}
+where
+\begin{equation}
+t_i\in\mathbb{R}^{+}
+\end{equation}
+denotes the arrival time of the event and satisfies the non-strictly increasing temporal constraint
+\begin{equation}
+t_1 \leq t_2 \leq \cdots \leq t_N.
+\end{equation}
+This formulation allows multiple note events to share identical or nearly identical arrival times, thereby representing block chords and compound sonic events occurring within a very short temporal interval. In the system implementation presented in Section~4, such approximately simultaneous events are further processed through a chord-clustering mechanism to mitigate their influence on local onset-density estimation.
+
+Furthermore,
+\begin{equation}
+d_i\in\mathbb{R}^{+}
+\end{equation}
+denotes the duration of the note, and
+\begin{equation}
+p_i\in\{0,1,\ldots,127\}
+\end{equation}
+denotes the absolute MIDI pitch under the twelve-tone equal temperament system.
+
+Through this representation, complex polyphonic and cross-tonal musical signals are transformed into a discrete event sequence driven by absolute timestamps. This formulation provides a unified event-sequence input domain for subsequent large-scale autoregressive sequence modeling based on Transformer architectures.
+
+\subsection{Conditional Autoregressive Factorization}
+
+In the interactive call-and-response task, the system's essential target is to generate the second half of a musical phrase, especially the AI Response sequence $R$, conditioned on the first half musical phrase provided by a human performer, namely the Call sequence $C$. In this study, the two sequences are defined as follows:
+
+\begin{equation}
+C = \{e_1^c, e_2^c, \ldots, e_m^c\}
+\end{equation}
+
+\begin{equation}
+R = \{e_1^r, e_2^r, \ldots, e_n^r\}
+\end{equation}
+
+Here, $C$ denotes the Call phrase performed by the human musician, while $R$ denotes the AI Response phrase generated by the system. In this task, the generation objective can be formulated as finding a response sequence with a high conditional probability under the given Call sequence, while also satisfying the musical logic of phrase continuation: 
+\begin{equation}
+R^{*}
+=
+\arg\max_{R}
+P(R \mid C).
+\end{equation}
+This study adopts a causally masked Transformer as a core generator, following the self-attention architecture introduced by \citet{vaswani2017attention}, converting the question into a conditional sequence generation problem. According to the chain rule of conditional probability, the joint conditional probability of the response sequence $R$ can be decomposed into an autoregressive product over individual musical events: 
+
+
+\begin{equation}
+P(R \mid C) = \prod_{j=1}^{n} P(e_j^r \mid C, e_{<j}^r).
+\end{equation}
+
+where
+
+\begin{equation}
+e_{<j}^r
+=
+\{e_1^r,e_2^r,\ldots,e_{j-1}^r\}
+\end{equation}
+
+denotes the history of previously generated response events before step $j$.
+
+This formulation indicates that the generation of the $j$-th response event depends not only on the human Call sequence $C$, but also on the response events already generated by the model itself.
+
+Furthermore, each response event is represented as a triplet consisting of arrival time, duration, and pitch:
+
+\begin{equation}
+e_j^r
+=
+(t_j^r,d_j^r,p_j^r).
+\end{equation}
+
+Consequently, the probability distribution of a single event can be further decomposed in a locally autoregressive manner:
+
+\begin{equation}
+P(e_j^r \mid \cdot) = P(t_j^r \mid \cdot) P(d_j^r \mid t_j^r, \cdot) P(p_j^r \mid t_j^r, d_j^r, \cdot).
+\end{equation}
+This factorization implies that the model first predicts when the next note event occurs, then predicts its duration, and finally predicts its pitch conditioned on the previously generated temporal attributes.
+
+In the implementation, the self-attention mechanism of the Transformer employs a lower-triangular causal mask to enforce temporal causality. Specifically, the prediction at step $j$ is allowed to attend only to the human Call sequence and previously generated Response events, while all future events remain inaccessible.
+
+This mechanism guarantees temporal consistency during streaming continuation and prevents information leakage from future positions.
+
+However, it is important to note that causal masking only guarantees temporal causality. It does not guarantee musical quality, structural coherence, stylistic consistency, or controllability of the generated response. In other words, causal masking answers the question of whether a sequence can be generated in a temporally valid manner, but not whether the generated music is aesthetically satisfying.
+
+Therefore, Section~4 introduces additional control mechanisms, including endpoint detection, nucleus sampling, phrase-level control, and optional style constraints, to mitigate common autoregressive generation failures such as repetitive loops, tonal drift, rhythmic imbalance, and empty outputs.
+
+\subsection{Dynamic Turn Segmentation Based on Continuous-Time Stopping Time}
+
+In free-form Call-and-Response interaction, accurately detecting the endpoint of a human-performed phrase is a prerequisite for seamless musical continuation. Instead of relying on rigid bar-line segmentation or fixed metrical clocks, this study models the human performer's free Note-On events as stochastic arrivals on a continuous time axis. Specifically, the MIDI Note-On event stream is formulated as a time-dependent inhomogeneous Poisson process. This formulation follows standard temporal point-process theory \citep{daley2003pointprocesses}.
+
+Assume that within the time interval $[0,t)$, the MIDI event stream generated by the performer is governed by a time-varying intensity function $\lambda(t)$. When the performer is actively playing, the inter-arrival time between adjacent events,
+
+\begin{equation}
+\Delta t_i = t_i - t_{i-1},
+\end{equation}
+
+is determined by the local performance rate. A higher local onset density corresponds to a higher event-arrival intensity, while a lower onset density indicates a slower or more sparse performance gesture.
+
+To dynamically estimate whether a human phrase has ended, this study introduces the survival-function formulation from survival analysis. Let $T_{\mathrm{last}}$ denote the timestamp of the most recent Note-On event. After this event, the relative silence duration is defined as
+
+\begin{equation}
+\tau = t_{\mathrm{current}} - T_{\mathrm{last}}.
+\end{equation}
+
+The survival function $S(\tau)$ is defined as the probability that no new event arrives within the silence interval of length $\tau$, or equivalently, that the next inter-arrival time exceeds $\tau$:
+
+\begin{equation}
+S(\tau)
+=
+P(\Delta t > \tau).
+\end{equation}
+
+According to the properties of an inhomogeneous Poisson process, the probability that no event occurs within the interval $[T_{\mathrm{last}}, T_{\mathrm{last}}+\tau]$ is determined by the integral of the intensity function. Therefore, the survival function can be written as
+
+\begin{equation}
+S(\tau)
+=
+P(\Delta t > \tau)
+=
+\exp
+\left(
+-
+\int_{0}^{\tau}
+\lambda(T_{\mathrm{last}} + u)
+\,du
+\right).
+\end{equation}
+
+Here, the corresponding hazard function can be interpreted as the instantaneous rate at which a new Note-On event may arrive after the performer has remained silent for duration $\tau$:
+
+\begin{equation}
+h(\tau)
+=
+\lambda(T_{\mathrm{last}}+\tau).
+\end{equation}
+
+Therefore, the hazard function is not interpreted as a direct ``death risk'' of the performer continuing to play. Instead, as the silence duration $\tau$ increases without observing any new Note-On event, the system's confidence that the current phrase has ended gradually increases under the local arrival model.
+
+For practical real-time implementation, the local intensity function is approximated by the recent onset density of the performer. Let $\mu_{\mathrm{tempo}}$ denote the estimated local performance rate. By assuming that the event-arrival intensity remains approximately constant within a short local window, we set
+
+\begin{equation}
+\lambda(t) \approx \lambda_0 = \mu_{\mathrm{tempo}}.
+\end{equation}
+
+The survival function can then be simplified as
+
+\begin{equation}
+S(\tau)
+=
+\exp(-\mu_{\mathrm{tempo}}\tau).
+\end{equation}
+
+This equation indicates that, under the local constant-rate approximation, the probability of observing no new event for a silence duration $\tau$ decays exponentially as $\tau$ increases.
+
+To make an endpoint decision, the system introduces a confidence boundary $\theta$, where $0<\theta<1$. Instead of claiming that the system can determine with absolute certainty that the human performer has stopped playing, the endpoint is detected when the survival probability falls below the predefined confidence boundary:
+
+\begin{equation}
+S(\tau) \leq \theta.
+\end{equation}
+
+Equivalently, the system makes an endpoint decision under a given confidence boundary when
+
+\begin{equation}
+\exp(-\mu_{\mathrm{tempo}}\tau_{\mathrm{cutoff}})
+=
+\theta.
+\end{equation}
+
+Taking the natural logarithm on both sides gives
+
+\begin{equation}
+-\mu_{\mathrm{tempo}}\tau_{\mathrm{cutoff}}
+=
+\ln(\theta).
+\end{equation}
+
+Thus, the dynamic cutoff threshold can be derived as
+
+\begin{equation}
+\tau_{\mathrm{cutoff}}
+=
+-\frac{\ln(\theta)}{\mu_{\mathrm{tempo}}}.
+\end{equation}
+
+Using the identity $-\ln(\theta)=\ln(1/\theta)$, the final form becomes
+
+\begin{equation}
+\tau_{\mathrm{cutoff}}
+=
+\frac{\ln(1/\theta)}{\mu_{\mathrm{tempo}}}.
+\end{equation}
+
+The resulting stopping-time rule can therefore be expressed as
+
+\begin{equation}
+t_{\mathrm{current}} - T_{\mathrm{last}}
+\geq
+\tau_{\mathrm{cutoff}}.
+\end{equation}
+
+When this condition is satisfied, the system treats the current Call phrase as completed and triggers the subsequent response-generation module. Since $\tau_{\mathrm{cutoff}}$ is inversely proportional to $\mu_{\mathrm{tempo}}$, the threshold adapts to the performer's local playing speed: faster passages lead to a shorter allowable silence duration, while slower passages produce a longer endpoint-detection tolerance. This adaptive formulation allows the system to segment musical turns in a continuous-time manner without relying on fixed metrical boundaries.
+
+\subsection{Section Summary}
+
+This section focuses on the mathematical modeling of symbolic music in the real-time Call-and-Response scenario and establishes two theoretical foundations for the system proposed in this study.
+
+First, instead of using traditional piano-roll representations or fixed-step temporal grids, this study models human MIDI improvisation as a discrete event stream on a continuous time axis. By representing each musical event as a triplet consisting of arrival time, duration, and pitch, namely
+
+\begin{equation}
+e_i = (t_i, d_i, p_i),
+\end{equation}
+
+complex polyphonic and cross-tonal musical signals are transformed into a unified event-sequence input domain suitable for autoregressive Transformer modeling.
+
+Second, to address the key problem of determining when a human Call phrase has ended in interactive phrase continuation, this section introduces the concepts of continuous-time stopping time and survival function. The silence interval after the most recent Note-On event is used as the basis for endpoint detection. By estimating the current event-arrival intensity through the local performance rate $\mu_{\mathrm{tempo}}$, the dynamic cutoff threshold is derived as
+
+\begin{equation}
+\tau_{\mathrm{cutoff}}
+=
+\frac{\ln(1/\theta)}{\mu_{\mathrm{tempo}}}.
+\end{equation}
+
+This formulation enables the system to determine phrase endpoints adaptively under a given confidence boundary $\theta$, according to the performer's local playing speed, rather than relying on fixed bar lines or fixed silence thresholds.
+
+However, the event-stream representation and stopping-time model developed in this section remain theoretical foundations. In real MIDI input, practical factors such as block chords, dense arpeggios, hesitation pauses, syncopated rhythms, and neural inference latency may complicate the direct application of the theoretical endpoint-detection rule. If the theoretical model is applied without engineering correction, it may lead to biased onset-density estimation, premature segmentation, or accumulated response latency.
+
+Therefore, Section~4 further translates the mathematical mechanisms introduced in this section into a real-time engineering system, including MIDI endpoint detection, chord-clustering correction, revocable candidate endpoints, asynchronous streaming decoding, speculative preload, and phrase-level musical control.
+
+
+\section{Real-Time MIDI Call-and-Response System Design}
+
+\subsection{Cross-Environment Architecture Based on Virtual MIDI }
+
+To support real-time low-latency MIDI phrase-continuation interaction, this system does not adopt a conventional monolithic offline-generation architecture. Instead, it constructs a cross-environment modular architecture based on a Virtual MIDI Bus. This architecture decouples physical performance input, the host audio environment, neural-network inference, and MIDI output rendering, allowing the system to achieve real-time interaction through equivalent routing chains across different operating systems and music-production environments.
+
+In practical deployment, this cross-platform routing chain can be implemented in multiple equivalent ways. For example, in a Windows environment, the system can use loopMIDI to establish virtual MIDI ports, together with REAPER, Decent Sampler, or other host audio workstations for input monitoring and sound rendering. In a macOS environment, an equivalent connection can be established through the IAC Bus and Logic Pro or other DAWs. Therefore, the system is not restricted to a specific DAW or operating system. Instead, it is abstracted as a cross-environment interaction chain consisting of physical MIDI input, virtual MIDI routing, a Python inference engine, and host-based sound rendering.
+
+The overall structure of the system can be split into two main components.
+
+\begin{enumerate}
+\item \textbf{Front-end performance capture and acoustic rendering component.}
+
+This component consists of the MIDI keyboard, virtual MIDI routing ports, a host digital audio workstation, or a local sampler. It is responsible for capturing real-time key events from the human performer and rendering the returned AI-generated MIDI output into sound. In concrete implementations, this component may be realized using REAPER, Logic Pro, Decent Sampler, or equivalent audio environments.
+
+\item \textbf{Back-end intelligent control and inference component.}
+
+This component runs independently in a Python environment. It receives the MIDI event stream from the front end, maintains the real-time input window, performs endpoint detection, executes asynchronous inference, applies sampling control, and schedules the generated response. Through multithreading and asynchronous queues, the back-end module manages the complete Call-and-Response interaction process without blocking the performer's real-time input.
+
+\end{enumerate}
+
+The real-time interaction workflow of the system is defined as four lifecycle phases that combine both sequential and parallel operations.
+
+Figure~\ref{fig:System_overview} summarizes this workflow. The diagram is organized into front-end MIDI capture, dynamic endpoint detection, asynchronous Transformer generation, and micro-buffered playback rendering, with auxiliary logging and offline objective evaluation shown as a separate analysis path.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/System_overview.png}
+\caption{System overview of the real-time MIDI call-and-response generation framework. Virtual MIDI routing decouples the human performer, Python back end, Transformer generation pipeline, host-based sound rendering, and offline Call100 evaluation.}
+\label{fig:System_overview}
+\end{figure}
+
+\noindent\textbf{Phase 1: Listening Phase.}
+
+The front-end MIDI input is continuously sent to the Python inference engine. The system maintains the event sequence of the human performer's current Call phrase in memory using a sliding window, while continuously recording Note-On timestamps, pitches, and durations. In this phase, the system only performs non-blocking listening and state updating, without triggering generation.
+
+\noindent\textbf{Phase 2: Endpoint Detection Phase.}
+
+Based on the continuous-time stopping-time mechanism derived in Section~3, the MIDI VAD module estimates the local onset density and the dynamic cutoff threshold of the current phrase in real time. When the silence duration satisfies the endpoint-detection condition, the system marks the current input window as a completed Call phrase and prepares to enter the generation phase.
+
+\noindent\textbf{Phase 3: Overlapped Inference Phase.}
+
+The confirmed Call event sequence is used as the prompt for a pretrained Transformer model, which then performs autoregressive decoding. To reduce perceived waiting time during interaction, inference and playback scheduling are not arranged as a fully sequential blocking process. Instead, asynchronous threads, a thread-safe queue, and a micro-buffering strategy are used to overlap computation and playback scheduling. This phase is also combined with nucleus sampling and subsequent control mechanisms to improve the stability and controllability of the generated response.
+
+\noindent\textbf{Phase 4: Seamless Playback Phase.}
+
+The AI-generated event tokens are progressively converted back into standard MIDI signals and sent through the virtual MIDI bus to the front-end host audio environment or local sampler for sound rendering. In this way, the system completes one closed-loop interaction from human Call input, endpoint detection, AI Response generation, to acoustic playback.
+
+Through this modular design, the system separates Transformer inference, MIDI event monitoring, endpoint detection, and sound rendering into independent but coordinated components. These modules communicate through the virtual MIDI bus and asynchronous queues. As a result, the architecture improves portability across different platforms and audio environments, while also providing the engineering foundation for endpoint-detection optimization, asynchronous streaming decoding, speculative preload, and phrase-level musical control.
+
+\subsection{Engineering Implementation of the Intelligent MIDI Endpoint Detection Module}
+
+Based on the continuous-time stopping-time formulation and the dynamic cutoff threshold derived in Section~3, this system implements an endpoint detection module in the Python back end, referred to as the MIDI VAD module. The main objective of this module is to determine whether the current human-performed Call phrase has ended, without relying on fixed bar lines or a fixed silence duration. Instead, the decision is made adaptively according to the performer's local playing speed and the real-time silence duration.
+
+For clarity, the control logic of the MIDI VAD module can be abstracted as the following state machine:
+\begin{equation}
+\text{Listening}
+\rightarrow
+\text{Candidate}
+\rightarrow
+\begin{cases}
+\text{Cancel} \rightarrow \text{Listening},\\
+\text{Commit} \rightarrow \text{Inference}.
+\end{cases}
+\label{eq:midi-vad-state-machine}
+\end{equation}
+
+Here, \textit{Listening} denotes the state in which the system continuously monitors the human MIDI input. \textit{Candidate} denotes a potential phrase endpoint that has been detected but not yet confirmed. \textit{Cancel} indicates that the candidate endpoint is revoked by a newly arriving Note-On event, causing the system to return to the \textit{Listening} state. \textit{Commit} indicates that the endpoint is formally confirmed, after which the current Call sequence is frozen and the system enters the subsequent inference stage.
+
+In the engineering implementation, a background daemon thread continuously polls the physical or virtual MIDI input port. Whenever the human performer is actively playing, each captured Note-On event updates the timestamp of the most recent event, denoted by $T_{\mathrm{last}}$.
+
+Meanwhile, the system maintains the arrival times of recent Note-On events or onset clusters in a sliding window, and estimates the current local onset density $\mu_{\mathrm{tempo}}$. Using the dynamic threshold formula derived in Section~3,
+\begin{equation}
+\tau_{\mathrm{cutoff}}
+=
+\frac{\ln(1/\theta)}{\mu_{\mathrm{tempo}}},
+\label{eq:dynamic-cutoff}
+\end{equation}
+the system updates the endpoint-detection threshold according to the performer's current playing speed. When the main thread detects that the current silence duration satisfies
+\begin{equation}
+t_{\mathrm{current}} - T_{\mathrm{last}}
+>
+\tau_{\mathrm{cutoff}},
+\label{eq:endpoint-condition}
+\end{equation}
+the system does not immediately close the input window. Instead, it first enters the candidate endpoint state and records the current time as $T_{\mathrm{candidate}}$.
+
+The system then enters a short confirmation window to determine whether the silence corresponds to a true phrase ending or merely a temporary pause during improvisation. In this way, the continuous-time stopping-time model introduced in Section~3 is transformed into an adaptive turn-segmentation mechanism that can operate in a real-time MIDI environment.
+
+\subsubsection{Chord-Clustering Correction for Onset-Density Estimation}
+
+When applying the Poisson-process-based endpoint detection model from Section~3 to real MIDI performance, one key issue arises from block chords, rapid arpeggios, and near-simultaneous multi-note events. In the theoretical model, the local intensity parameter $\mu_{\mathrm{tempo}}$ approximates the current event-arrival rate and determines the dynamic cutoff threshold $\tau_{\mathrm{cutoff}}$. However, in real keyboard performance, a single musically meaningful chord onset may generate multiple physical Note-On events within only a few tens of milliseconds.
+
+If the system directly counts each physical note as an independent onset in the sliding window, the local onset density $\mu_{\mathrm{tempo}}$ will be artificially inflated. Since the dynamic cutoff threshold satisfies Equation~\eqref{eq:dynamic-cutoff}, an overestimated $\mu_{\mathrm{tempo}}$ will excessively shorten $\tau_{\mathrm{cutoff}}$. As a result, the system may prematurely interpret the silence after a chord or dense arpeggio as the end of the human phrase.
+
+To address this issue, the system introduces a chord-clustering time window in the MIDI VAD computation layer:
+\begin{equation}
+\Delta t_{\mathrm{cluster}} \approx 0.08\,\mathrm{s}.
+\label{eq:cluster-window}
+\end{equation}
+
+If multiple Note-On events arrive within this short time window, they are merged into a single onset cluster, which is then treated as one compound triggering unit in the sliding window. In this way, the local intensity estimation is corrected from a physical-note-wise density to a musical-onset-wise density.
+
+In other words, chord clustering does not replace the Poisson-process model introduced in Section~3. Rather, it serves as an engineering correction to the local intensity estimate $\mu_{\mathrm{tempo}}$. This mechanism enables the endpoint detection module to distinguish more accurately between multi-note events within a single chord and genuinely rapid successive phrase onsets, thereby reducing the influence of chordal textures, dense arpeggios, and fast attack gestures on endpoint decisions.
+
+\subsubsection{Two-Stage Revocable Candidate Endpoint and Confirmation Window}
+
+In real improvisational performance, human musicians do not always end phrases in a clear or regular manner. Short expressive pauses, gaps after syncopated gestures, and breathing spaces within unfinished phrases may temporarily cause the silence duration to exceed $\tau_{\mathrm{cutoff}}$. If the system triggers generation immediately once the endpoint condition is satisfied, the AI may enter too early and interrupt the performer's continuing phrase.
+
+Therefore, this system introduces a two-stage revocable candidate endpoint mechanism on top of the basic endpoint-detection inequality. This mechanism consists of two stages: candidate marking and confirmation-window waiting.
+
+The first stage is candidate marking. When the system first detects that Equation~\eqref{eq:endpoint-condition} is satisfied, it does not immediately commit the endpoint. Instead, it marks the current time as a candidate endpoint:
+\begin{equation}
+T_{\mathrm{candidate}} = t_{\mathrm{current}},
+\label{eq:candidate-time}
+\end{equation}
+and enters the \textit{Candidate} state.
+
+The second stage is confirmation-window waiting. After the candidate endpoint is marked, the system opens a short confirmation window:
+\begin{equation}
+\Delta T_{\mathrm{confirm}} \approx 0.15\,\mathrm{s}.
+\label{eq:confirm-window}
+\end{equation}
+
+Within this confirmation window, the system follows two possible branches depending on whether a new Note-On event is detected.
+
+If a new Note-On event is captured within the confirmation window, the previous silence is more likely to be a temporary pause within the human performance rather than a true phrase ending. In this case, the system cancels the candidate endpoint, returns to the \textit{Listening} state, and continues accumulating the original Call sequence.
+
+If no new Note-On event is detected before the confirmation window expires, the candidate endpoint is formally committed as the phrase endpoint. The current input window is then frozen as a complete Call sequence, and the system enters the subsequent asynchronous streaming inference stage.
+
+Through this two-stage mechanism, the theoretical endpoint formula is not used as a hard segmentation rule. Instead, it is extended into a real-time decision process with a confirmation buffer. This design reduces the risk of false endpoint detection during fast passages, syncopated rhythms, and hesitation pauses, while also providing the control basis for the speculative preload mechanism introduced later.
+\subsection{Asynchronous Streaming Decoding and Micro-Buffered Scheduling}
+\label{sec:streaming-decoding}
+
+In symbolic-music autoregressive generation systems, conventional deep-learning inference often follows a globally blocking workflow, in which the entire phrase is generated first and then played back as a complete sequence. In other words, the system must wait until the model finishes generating the full response phrase before converting it into MIDI signals for playback. However, in a real-time Call-and-Response interaction scenario, such a blocking workflow introduces noticeable waiting time. This issue becomes more significant for autoregressive models such as Transformers, where events must be predicted step by step and the overall inference time is affected by sequence length, model size, and hardware capacity.
+
+To reduce the perceived latency caused by blocking generation, this system designs an asynchronous streaming decoding and micro-buffered clock-overlapping scheduling mechanism. The core idea is that the system does not wait for the entire Response phrase to be generated before playback. Instead, as the model progressively generates event tokens, the already generated events are immediately sent to the playback scheduling queue, allowing model inference time and MIDI acoustic playback time to partially overlap on the physical time axis.
+
+In the engineering implementation, this architecture mainly consists of two parallel threads and a thread-safe queue.
+
+\noindent\textbf{(1) Inference Thread.}
+When the endpoint detection module confirms the end of the human Call phrase, the system starts an inference thread in the background. This thread is responsible for executing the autoregressive decoding process of the Transformer. Whenever the model generates a new musical event token $e_i=(t_i,d_i,p_i)$, the system immediately writes it into the shared thread-safe queue, without waiting for all subsequent tokens to be generated.
+
+\noindent\textbf{(2) Playback Thread.}
+The playback thread continuously monitors the shared queue. Once a playable event token becomes available, the system converts it back into standard MIDI signals and sends it through the local virtual MIDI bus to the host audio environment or sampler for sound rendering. For example, in a Windows environment, the system can be routed through loopMIDI to REAPER, Decent Sampler, or other equivalent audio environments. In a macOS environment, an equivalent connection can be established through the IAC Bus and Logic Pro or other DAWs.
+
+To further reduce the risk of playback interruption caused by buffer underrun, the system introduces an initial pre-buffering strategy before playback starts. After endpoint confirmation, the playback scheduler sets a short initial waiting window $\Delta T_{\mathrm{buffer}}$. In this system, the window is typically set to approximately $80\,\mathrm{ms}$, providing an initial safety margin for subsequent streaming playback.
+
+Let the single-step inference time required to generate the $k$-th event be $\tau_{\mathrm{infer}}(k)$, and let the actual acoustic duration of the generated event $y_k$ be $D(y_k)$. To prevent the playback thread from exhausting the buffer while continuously reading generated events, the system expects that before the playback of the $j$-th event is completed, sufficient inference and scheduling margin has already been accumulated for the following event. This condition can be formalized as
+\begin{equation}
+\Delta T_{\mathrm{buffer}}
++
+\sum_{k=1}^{j} D(y_k)
+>
+\sum_{k=1}^{j+1} \tau_{\mathrm{infer}}(k),
+\quad
+\forall j \in \{1,2,\ldots,n-1\}.
+\label{eq:streaming-buffer-condition}
+\end{equation}
+
+The engineering meaning of Equation~\eqref{eq:streaming-buffer-condition} is that the initial micro-buffer, together with the accumulated acoustic duration of the first $j$ notes, should be larger than the accumulated inference time required for the first $j+1$ notes. If this condition is approximately satisfied during generation, the system can reduce the risk of buffer underrun caused by inference-time fluctuations or by the continuous generation of extremely short-duration notes.
+
+It should be noted that this mechanism does not theoretically eliminate model inference latency. Instead, it weakens the perceptual impact of inference waiting time through temporal overlap scheduling. Compared with the blocking workflow of generating the entire phrase before playback, asynchronous streaming decoding can output the first MIDI events earlier, thereby reducing first-token latency and improving the continuity of real-time performance interaction.
+
+\subsubsection{Speculative Preload for Candidate Endpoints}
+\label{sec:speculative-preload}
+
+In Section~4.2.2, this study introduces a two-stage revocable candidate endpoint mechanism to reduce false endpoint decisions caused by hesitation pauses, syncopated rhythms, or unfinished phrases in human performance. However, this mechanism also introduces a new source of interaction latency: the confirmation window.
+
+Specifically, when the system detects that the current silence duration exceeds the dynamic cutoff threshold $\tau_{\mathrm{cutoff}}$, it does not immediately commit the endpoint. Instead, it enters a short confirmation window $\Delta T_{\mathrm{confirm}}$. In this system, the confirmation window is typically set to approximately $0.15\,\mathrm{s}$. If the system has to wait until this confirmation window fully expires before starting Transformer inference, the confirmation time will be directly added to the perceived first-note latency of the AI Response, thereby weakening the immediacy of the human-AI musical interaction.
+
+To reduce the additional waiting time introduced by the confirmation window, this system proposes and implements a speculative preload mechanism for candidate endpoints. This mechanism is one of the key engineering contributions of the proposed system. Its basic idea is that when the system enters the \textit{Candidate} state, it does not passively wait for the confirmation window to finish. Instead, it starts a speculative inference process in the background, turning the confirmation window into a time interval for model warm-up and initial token generation.
+
+When the system first detects that
+\begin{equation}
+t_{\mathrm{current}} - T_{\mathrm{last}}
+>
+\tau_{\mathrm{cutoff}},
+\label{eq:preload-trigger-condition}
+\end{equation}
+the current time is marked as a candidate endpoint $T_{\mathrm{candidate}}$. At the same time, the system immediately clones the currently accumulated human Call sequence as a snapshot and uses it as the prompt for the Transformer back end. A speculative preload thread is then started asynchronously in the background. This thread can pre-execute model forward propagation, context loading, and initial token generation, thereby preparing usable results for a possible Commit branch.
+
+During the confirmation window, the system continues to monitor the MIDI input port and performs branch selection at $T_{\mathrm{candidate}}+\Delta T_{\mathrm{confirm}}$.
+
+\noindent\textbf{(1) Commit Branch.}
+If no new Note-On event is detected within the confirmation window, the candidate endpoint is committed as the formal phrase endpoint. At this moment, the system does not need to start inference from scratch. Instead, it can directly take over the initial tokens already produced by the speculative preload thread and push them into the playback scheduling queue. The perceived first-note response latency can then be approximated as
+\begin{equation}
+\tau_{\mathrm{perceived}}
+=
+\max\left(
+0,\,
+\tau_{\mathrm{first}}-\Delta T_{\mathrm{confirm}}
+\right).
+\label{eq:perceived-latency-preload}
+\end{equation}
+
+Here, $\tau_{\mathrm{first}}$ denotes the time required by the model to generate the first playable token under normal inference conditions. If
+\begin{equation}
+\tau_{\mathrm{first}}
+\leq
+\Delta T_{\mathrm{confirm}},
+\label{eq:first-token-covered}
+\end{equation}
+then the generation of the first token can be largely covered by the confirmation window. In this case, once the confirmation window expires, the system can enter MIDI playback more quickly, thereby reducing the response latency perceived by the human performer.
+
+\noindent\textbf{(2) Cancel Branch.}
+If a new Note-On event is captured within the confirmation window, the performer is considered to still be playing, and the previous silence is more likely to be a temporary pause rather than a true phrase ending. In this case, the system cancels the candidate endpoint, terminates or discards the temporary results produced by the speculative preload thread, and appends the newly arrived event to the current Call sequence. The system then returns to the \textit{Listening} state and continues endpoint detection.
+
+Therefore, speculative preload is essentially an engineering trade-off between computation and latency. It reduces perceived interaction latency by introducing additional computation. In the Commit branch, the mechanism can use the confirmation window to complete part of the inference process in advance, thereby reducing first-note waiting time. However, in the Cancel branch, the pre-generated tokens are discarded, and the consumed computational resources cannot be fully reused. Thus, this mechanism is not a cost-free optimization, but a trade-off between real-time interaction fluency and additional computational overhead.
+
+Overall, the speculative preload mechanism works together with the two-stage revocable endpoint mechanism. The confirmation window improves the robustness of endpoint detection, while speculative preload reduces the additional perceived latency introduced by the confirmation window. Together, they form a practical compromise between endpoint safety and response immediacy in the proposed real-time MIDI Call-and-Response system.
+
+\subsection{Relative Interval Representation and Nucleus Sampling Control in a High-Entropy Setting}
+\label{sec:relative-interval-nucleus-sampling}
+
+Without imposing a fixed tonal constraint, the system allows the Transformer to generate conditionally within the full pitch space of the twelve-tone equal temperament system. Compared with generation methods restricted to a predefined key or scale, this open setting increases the freedom of the Response phrase, but it also expands the candidate space for next-event prediction and leads to a higher-entropy output distribution. To preserve improvisational flexibility while reducing the risk of sampling low-probability abnormal candidates, the system adopts nucleus sampling, also known as Top-$p$ sampling \citep{holtzman2020curious}.
+
+\noindent\textbf{(1) Relative event representation at the input side.}
+
+In the input pipeline, the system does not rely directly on absolute MIDI timestamps. Instead, it converts them into relative arrival times between adjacent events:
+\begin{equation}
+\Delta t_i = t_i - t_{i-1}.
+\label{eq:relative-arrival-time}
+\end{equation}
+
+This relative arrival-time representation reduces the model's dependence on fixed bar lines, absolute beat positions, and global temporal locations. It allows the model to focus more on local rhythmic density, inter-event intervals, and micro-timing variations. In terms of pitch organization, the system also emphasizes relative interval relationships between adjacent notes or between notes and the phrase-level pitch center, rather than merely memorizing absolute pitches within a fixed key. For example, the interval between adjacent notes can be represented as
+\begin{equation}
+\Delta p_i = p_i - p_{i-1}.
+\label{eq:relative-pitch-interval}
+\end{equation}
+
+Through this relative representation, the input sequence is transformed into an event-relation representation that is more suitable for real-time improvisational interaction. It helps reduce the modeling burden associated with absolute temporal positions and fixed tonal labels, allowing the model to devote more capacity to capturing rhythmic motives, melodic contours, and local tension structures in the human Call phrase.
+
+\noindent\textbf{(2) Nucleus sampling and temperature control at the output side.}
+
+During autoregressive decoding, the Transformer produces a probability distribution over candidate MIDI pitches or event tokens. If random sampling is performed directly over the entire distribution, the model may achieve high generative freedom, but it may also sample extremely low-probability long-tail candidates. These long-tail candidates may sound like abrupt leaps, unexpected pitches, or local structural breaks, thereby weakening the continuity of the Call-and-Response interaction.
+
+Therefore, without modifying the parameters of the underlying Transformer, the system applies nucleus sampling and temperature scaling as a probability-control layer during decoding. Let $P(x)$ denote the original candidate distribution produced by the model, where $x$ represents a candidate note or event token. The system first sorts all candidates in descending order of probability and selects the smallest candidate set $S_p$ satisfying
+\begin{equation}
+S_p = \{x_{(1)}, x_{(2)}, \ldots, x_{(K)}\},
+\label{eq:nucleus-set}
+\end{equation}
+where
+\begin{equation}
+K =
+\min \left\{
+k
+\ \middle|\
+\sum_{i=1}^{k} P(x_{(i)}) \geq p
+\right\}.
+\label{eq:nucleus-k}
+\end{equation}
+
+In the actual system, the threshold $p$ is typically set around $0.95$. This strategy does not simply remove a fixed percentage of notes. Instead, it dynamically preserves the high-probability nucleus whose cumulative probability reaches the threshold, while excluding low-probability long-tail candidates outside that cumulative mass. The system then renormalizes the probability distribution within $S_p$ and samples from it:
+\begin{equation}
+P'(x)=
+\begin{cases}
+\dfrac{P(x)}{\sum_{y \in S_p} P(y)}, & x \in S_p,\\[1.2ex]
+0, & x \notin S_p.
+\end{cases}
+\label{eq:nucleus-renormalization}
+\end{equation}
+
+Meanwhile, the system uses the temperature parameter $T$ to adjust the smoothness of the probability distribution. If the model outputs logits $z_i$, the temperature-scaled probability can be written as
+\begin{equation}
+P_T(x_i)
+=
+\frac{\exp(z_i/T)}
+{\sum_j \exp(z_j/T)}.
+\label{eq:temperature-scaling}
+\end{equation}
+
+When $T<1$, the distribution becomes sharper, making high-probability candidates more likely to be selected and usually producing more stable results. When $T>1$, the distribution becomes flatter, increasing the chance of sampling lower-probability candidates and making the output more random and exploratory. In real-time Call-and-Response interaction, moderately lowering $T$ can reduce overly divergent pitch choices and give the Response phrase a clearer sense of direction.
+
+In summary, nucleus sampling and temperature scaling form a lightweight probabilistic control mechanism at the output side of the system. This mechanism does not directly guarantee that the generated result will satisfy a specific harmonic rule. However, it can effectively reduce the probability of sampling low-probability long-tail candidates, allowing the system to maintain generative freedom within an open chromatic space while improving the controllability of local coherence and auditory stability in the Response phrase.
+\subsection{Phrase-level Music Control Layer}
+\label{sec:phrase-level-control}
+
+In an autoregressive symbolic music generation framework, the underlying Transformer model mainly performs conditional continuation through token-level probability estimation. However, due to the local attention bias of autoregressive decoding and the long-tail nature of the output probability distribution, purely token-level sampling strategies, such as Top-$p$ sampling and temperature scaling, are insufficient for perceiving and constraining the global structural properties of a musical phrase. In real-time improvisational interaction, this limitation may lead to several unstable generation behaviors, including disproportionate response duration, local degenerative repetition, and occasional empty outputs in which no valid playable notes are generated.
+
+To bridge the gap between microscopic token prediction and macroscopic phrase-level musical logic, this system introduces a fully decoupled Phrase-level Control Layer around the autoregressive inference pipeline. The control layer explicitly models the global organization of the human-performed Call, constructs a response plan before generation, and applies post-generation constraints to ensure that the AI-generated Response remains within a coherent call-and-response phrase framework. Importantly, this layer does not modify the parameters or forward probability distribution of the Transformer model. Instead, it operates as an external control mechanism that regulates the input prompt, sampling process, fallback behavior, and final temporal rendering.
+
+\subsubsection{CallProfile-based Phrase Intention Analysis and ResponsePlan Construction}
+\label{sec:callprofile-responseplan}
+
+The first step of phrase-level control is to extract a macroscopic representation from the human-performed Call phrase. After the endpoint detection module described in Section~4.2 closes the input window, the system maps the accumulated Call sequence
+\begin{equation}
+C = \{e_1^c, e_2^c, \ldots, e_m^c\}
+\label{eq:call-sequence-control}
+\end{equation}
+into a multi-dimensional phrase-level feature vector, denoted as the CallProfile:
+\begin{equation}
+P_{\mathrm{call}}
+=
+\left[
+T_{\mathrm{call}},
+N_{\mathrm{call}},
+\Omega_{\mathrm{pitch}},
+\bar{p}_{\mathrm{call}},
+H_{\mathrm{pitch}},
+\nabla_{\mathrm{melody}},
+\rho_{\mathrm{rhythm}},
+T_{\mathrm{repeat}}
+\right]^T .
+\label{eq:callprofile-vector}
+\end{equation}
+
+Here, the components of $P_{\mathrm{call}}$ are defined as follows:
+\begin{itemize}
+    \setlength\itemsep{0.2em}
+    \item $T_{\mathrm{call}}$ denotes the duration of the Call phrase.
+    \item $N_{\mathrm{call}}$ denotes the total number of notes.
+    \item $\Omega_{\mathrm{pitch}}=[p_{\min},p_{\max}]$ represents the pitch range.
+    \item $\bar{p}_{\mathrm{call}}$ is the mean absolute pitch.
+    \item $H_{\mathrm{pitch}}$ denotes the pitch-class histogram and the proportion of the dominant pitch.
+    \item $\nabla_{\mathrm{melody}}$ describes the first-order melodic contour.
+    \item $\rho_{\mathrm{rhythm}}=N_{\mathrm{call}}/T_{\mathrm{call}}$ measures the rhythmic density.
+    \item $T_{\mathrm{repeat}}$ marks whether the ending of the Call contains a repeated-note gesture.
+\end{itemize}
+
+
+
+Based on the extracted CallProfile, the control layer constructs a ResponsePlan through a set of heuristic mapping rules:
+\begin{equation}
+\mathrm{Plan}_{\mathrm{resp}}
+=
+\left\{
+T_{\mathrm{target}},
+N_{\mathrm{target}},
+\Omega_{\mathrm{allow}},
+CPR_{\mathrm{limit}},
+Share_{\max},
+K_{\mathrm{resample}}
+\right\}.
+\label{eq:responseplan}
+\end{equation}
+
+The ResponsePlan provides phrase-level boundaries for the subsequent AI response. It does not intervene in the internal Transformer computation, but instead defines global constraints outside the neural model. Specifically, it serves three functions.
+
+First, the structural correspondence mechanism estimates the target response duration $T_{\mathrm{target}}$ and the target note count $N_{\mathrm{target}}$ according to the duration and rhythmic density of the human Call. This establishes a macro-level temporal boundary for the Response phrase.
+
+Second, the pitch-range projection mechanism anchors the allowed response range $\Omega_{\mathrm{allow}}$ around the Call pitch range $\Omega_{\mathrm{pitch}}$ and nearby consonant intervals. This reduces the probability of sudden extreme leaps that are weakly related to the input phrase.
+
+Third, the safety-threshold configuration defines the maximum continuous pitch repetition limit $CPR_{\mathrm{limit}}$ and the maximum dominant-pitch share $Share_{\max}$. These thresholds provide the basis for detecting and suppressing degenerative repetition during generation.
+
+\subsubsection{Repetition-tail Compression and Repetition Suppression}
+\label{sec:repetition-tail-suppression}
+
+In free improvisational interaction, human performers often use repeated pitches or repeated chordal gestures as an ending signal. However, autoregressive models tend to assign high attention weight to the most recent tokens in the prompt. If a Call phrase with a long repeated ending is directly used as the Transformer input, the model may overestimate the musical importance of the repeated tail and reproduce it excessively in the Response. This can cause the generated phrase to fall into a local repetition attractor.
+
+To address this problem, the Phrase-level Control Layer applies dynamic interventions on both the input side and the output side.
+
+\noindent\textbf{(1) Input-side prompt cleaning.}
+Before inference begins, the system activates a prompt-cleaning procedure. If the final segment of the Call contains repeated occurrences of the same absolute pitch $p$, and the repetition count exceeds a predefined threshold, for example $N_{\mathrm{repeat}}\geq 3$, or if the same pitch occupies an unusually large proportion within the final time window, the system marks this segment as an ending gesture.
+
+When constructing the final prompt for the Transformer, the algorithm compresses the repeated tail by keeping at most two ending notes. This design preserves the structural information that the Call has reached a closing gesture, while reducing the excessive local repetition that may otherwise dominate the autoregressive context.
+
+\noindent\textbf{(2) Output-side repetition constraint and resampling.}
+During point-by-point autoregressive generation, the system applies not only nucleus sampling as described in Section~4.4, but also a state-based rejection check after each sampling step. Let the partial response generated before step $j$ be denoted as $R_{<j}$. For the current candidate event $e_j^r$, the system checks whether it violates either of the following constraints.
+
+The first constraint is the Continuous Pitch Repetition constraint. If the candidate event causes the same pitch $p$ to appear continuously more than $CPR_{\mathrm{limit}}$ times, the token is rejected.
+
+The second constraint is the Dominant Share constraint. The system dynamically calculates the pitch distribution of $R_{<j}$. If accepting the current candidate would cause a single pitch to exceed the maximum allowed proportion $Share_{\max}$, the token is also rejected.
+
+Once an invalid token is detected, the system resamples from the model distribution, with the maximum number of resampling attempts limited by $K_{\mathrm{resample}}$. If the model distribution remains highly concentrated and still fails to produce a valid token after repeated attempts, the system activates a fallback pitch-correction mechanism. In this case, the candidate pitch is shifted by semitone steps toward a nearby consonant pitch around the Call mean pitch $\bar{p}_{\mathrm{call}}$. This deterministic correction helps the generation escape from a local repetition attractor while maintaining a pitch relationship with the input phrase.
+
+\subsubsection{Motif-transformation Fallback and Duration Matching}
+\label{sec:fallback-duration-matching}
+
+\noindent\textbf{(1) Fallback on empty generation.}
+When neural symbolic music generation models receive extremely sparse or unstable human prompts, the End-of-Sequence token may occasionally dominate the output distribution. In such cases, the neural backend may return zero valid playable notes. For a real-time interactive music system, this would result in an undesirable silence and interrupt the call-and-response interaction.
+
+To improve system robustness, this work introduces a deterministic Motif Transformation Fallback Generator. When the system detects that the neural model has generated no valid note events, it switches to this fallback module as an engineering safety mechanism. The fallback generator uses the ending motif of the human Call as source material and applies a sequence of rule-based musical transformations:
+\begin{equation}
+R_{\mathrm{fallback}}
+=
+T_{\mathrm{scale}}
+\circ T_{\mathrm{clip}}
+\circ T_{\mathrm{shift}}
+\circ T_{\mathrm{inverse}}
+(C_{\mathrm{tail}}).
+\label{eq:motif-fallback}
+\end{equation}
+
+The transformation process includes melodic inversion around a central pitch axis, transposition toward the neighborhood of $\bar{p}_{\mathrm{call}}$, clipping of notes that exceed the allowed pitch boundary, and proportional rhythmic scaling. Through these operations, the fallback module can produce a short and playable response that remains structurally related to the Call phrase.
+
+This mechanism is not intended to serve as the primary source of musical creativity. Rather, it functions as an engineering safety net that prevents the real-time interaction loop from breaking when the neural model produces an empty or unusable output.
+
+\noindent\textbf{(2) Response duration matching.}
+In streaming playback, the number of generated notes does not necessarily correspond to the perceived length of the musical phrase. Since note durations $d_i$ and inter-onset intervals $\Delta t_i$ are both stochastic, the model may generate the planned number of tokens within an overly short or overly long physical time span. This can make the Response phrase sound temporally unbalanced relative to the human Call.
+
+To maintain macro-level temporal symmetry in the call-and-response structure, the control layer introduces a duration-matching stage before rendering. The system first calculates the nominal duration of the raw generated event stream:
+\begin{equation}
+T_{\mathrm{raw}} = t_n^r - t_1^r .
+\label{eq:raw-response-duration}
+\end{equation}
+
+It then compares this value with the planned target duration $T_{\mathrm{target}}$ and defines the duration matching ratio as
+\begin{equation}
+\gamma =
+\frac{T_{\mathrm{target}}}{T_{\mathrm{raw}}}.
+\label{eq:duration-match-ratio}
+\end{equation}
+
+If $\gamma$ falls outside a predefined safe range, for example
+\begin{equation}
+\gamma \notin [0.85, 1.25],
+\label{eq:duration-safe-range}
+\end{equation}
+the control layer activates a temporal stretching or compression process. The adjusted onset time and duration are computed as
+\begin{equation}
+t_{i,\mathrm{actual}}^r
+=
+t_1^r
++
+\alpha_{\mathrm{stretch}}
+\cdot
+\left(
+t_{i,\mathrm{raw}}^r - t_1^r
+\right),
+\label{eq:actual-onset-time}
+\end{equation}
+and
+\begin{equation}
+d_{i,\mathrm{actual}}^r
+=
+\alpha_{\mathrm{stretch}}
+\cdot
+d_{i,\mathrm{raw}}^r .
+\label{eq:actual-duration}
+\end{equation}
+
+Here, $\alpha_{\mathrm{stretch}}$ is a dynamic stretching factor obtained through a bounded function that prevents excessive distortion of the musical timing. By proportionally stretching or compressing the onset timestamps and note durations, the system moves the physical playback length of the AI Response toward the target duration while preserving the relative rhythmic structure of the generated phrase.
+
+After each interaction round, the logging module records the raw response duration, the adjusted playback duration, the duration matching ratio $\gamma$, and the stretching factor $\alpha_{\mathrm{stretch}}$. These fields include \texttt{raw\_response\_seconds}, \texttt{actual\_response\_seconds}, \texttt{duration\_match\_ratio}, and \texttt{duration\_stretch\_factor}. Therefore, duration matching is not only a real-time control mechanism, but also a measurable component that can support the objective evaluation and ablation analysis in Section~5.
+
+\subsection{Chromatic Free Improvisation and Optional Style Constraint Layer}
+
+The fundamental design goal of this system is to support Chromatic Free Improvisation, allowing the autoregressive Transformer to perform conditional generation within the complete pitch space of twelve-tone equal temperament. Unlike generation methods that rely on a fixed mode or a predefined scale, this mode does not require the AI Response to remain within a specific tonal collection. Instead, the model generates the continuation phrase according to the pitch relationships, relative temporal structure, and local motifs observed in the human Call sequence.
+
+However, in practical human-AI performance and offline system evaluation, certain application scenarios require stronger stylistic consistency and structural controllability. For example, traditional modal melodies, fixed-meter phrases, two-bar response structures, or reproducible experimental benchmarks often require the generated Response to satisfy more explicit constraints in terms of scale, rhythmic grid, strong-beat stability, and cadence. To balance open-ended generative freedom with style-specific controllability, this system introduces a fully decoupled Optional Style Constraint Layer on top of the underlying causal Transformer generator.
+
+This style constraint layer does not modify the parameters of the Transformer, nor does it directly intervene in the forward probability distribution of the model. Instead, it functions as a post-processing pipeline that applies symbolic projection, temporal quantization, and structural correction to the event stream produced by the original sampler. Through a configurable switch, the system can alternate between the default Chromatic Mode and specific style-constrained modes. It should be emphasized that the style constraint layer is an extension of the system's application scenarios, rather than a negation of chromatic free improvisation. The former provides structured controllability, while the latter preserves the system's generative freedom in an open pitch space.
+
+\subsubsection{Chromatic Mode}
+
+Chromatic Mode is the default open-generation mode of the system. In this mode, the system does not impose hard constraints based on artificial scales, fixed modes, or rhythmic grids. The underlying Transformer mainly relies on the continuous-time event representation, relative arrival-time encoding, and nucleus sampling strategy described earlier to generate subsequent Response events from the human Call sequence.
+
+This mode allows the generated result to include chromatic motion, tonal deviation, irregular rhythmic organization, and free temporal development beyond conventional bar-line boundaries. Since the system does not require generated pitches to belong to a predefined scale set, the model can explore melodic direction and color variation in a larger pitch space while remaining conditioned on the human input. Therefore, Chromatic Mode represents the system's basic support for cross-tonal free improvisation and serves as the default open-ended generation state.
+
+At the same time, Chromatic Mode does not imply the absence of control. The system still retains mechanisms such as nucleus sampling, temperature scaling, endpoint detection, asynchronous streaming decoding, and phrase-level control to reduce long-tail sampling errors, abnormal repetition, empty output, and duration imbalance. In other words, this mode removes hard constraints on artificial tonality and rhythmic grids, but does not abandon overall stability control during generation.
+
+\subsubsection{Engineering Implementation of the pentatonic\_2bar\_4\_4 Style Constraint Layer}
+
+To support specific phrase-response forms, traditional pentatonic-style generation, and reproducible experimental evaluation, this system implements an optional \texttt{pentatonic\_2bar\_4\_4} style-constrained mode. This mode does not replace the default Chromatic Mode. Instead, it serves as a configurable style option in the post-processing layer, further constraining the event stream generated by the Transformer.
+
+The style constraint layer consists of the following five cascaded mechanisms:
+
+\begin{enumerate}
+    \item \textbf{4/4 Meter Clock and Two-Bar Temporal Boundary} \\
+    In the default free-improvisation mode, the duration of the Response is mainly adjusted by the \texttt{ResponsePlan} and the duration-matching layer. In the \texttt{pentatonic\_2bar\_4\_4} mode, the system introduces a standard 4/4 metrical clock and restricts the target response length to two bars. If the current BPM is known, the two-bar duration can be converted into the physical duration of eight quarter-note beats. When the relative timestamp of a generated event exceeds this boundary, subsequent events are truncated during post-processing or decoding control, so that the Response maintains a relatively stable structural length in the experimental setting.
+
+    \item \textbf{Pentatonic Scale Snapping and Pitch-Class Projection} \\
+    To make the generated result exhibit a clearer pentatonic modal color, the system determines the current pentatonic mode according to the statistically dominant pitch in the human Call phrase or a predefined tonal center. Let the allowed pentatonic pitch set be defined as
+    \begin{equation}
+        P_{\mathrm{pentatonic}} = \{p \in \mathbb{Z} \mid (p \bmod 12) \in M_{\mathrm{mode}}\},
+    \end{equation}
+    where $M_{\mathrm{mode}}$ denotes the pitch-class set of the current pentatonic mode. When a generated pitch $p_i$ does not belong to this set, the post-processing layer projects it to the nearest or musically more appropriate pentatonic scale degree:
+    \begin{equation}
+        p_i' = \Pi_{P_{\mathrm{pentatonic}}}(p_i).
+    \end{equation}
+    This mechanism does not claim that the model itself inherently guarantees pentatonic modal logic. Instead, it constrains the output pitches to the pentatonic modal set at the post-processing level, thereby improving stylistic consistency.
+
+    \item \textbf{Rhythmic Grid Quantization} \\
+    To make the Response more rhythmically regular under this style mode, the system divides the two-bar temporal space into a rhythmic grid with a predefined resolution, such as a sixteenth-note grid or an eighth-note triplet grid. The arrival time and duration of each generated event are mapped to the nearest grid point:
+    \begin{equation}
+        t_{i,\mathrm{quantized}}^r = \Delta t_{\mathrm{grid}} \cdot \mathrm{round}\left( \frac{t_{i,\mathrm{raw}}^r}{\Delta t_{\mathrm{grid}}} \right).
+    \end{equation}
+    Similarly, the duration $d_i^r$ can also be quantized according to the same grid. This operation reduces the micro-timing freedom in the raw generated event stream, but improves rhythmic regularity and comparability under the experimental style mode.
+
+    \item \textbf{Strong-Beat Stability Control} \\
+    In a 4/4 metrical structure, strong beats usually carry more important melodic support and modal stability. Therefore, in the \texttt{pentatonic\_2bar\_4\_4} mode, the system applies additional checks to notes that fall on strong beats, such as the first and third beats of each bar. If a strong-beat note does not belong to a stable structural degree of the current pentatonic mode, the post-processing layer may adjust it toward the tonic, dominant, or another stable scale degree. Less stable passing or ornamental tones are more likely to be retained on weaker beats. This mechanism is used to enhance the modal support and metrical clarity of the two-bar Response.
+
+    \item \textbf{Cadential Pitch-Class Resolution and Maximum Melodic Leap Restriction} \\
+    At the end of the phrase, the system applies additional constraints to the final pitch classes of the Response, encouraging them to resolve to stable scale degrees of the current pentatonic mode, such as the tonic or dominant. This mechanism reduces the sense of unresolved suspension caused by random truncation and strengthens the ending effect of the two-bar structure.
+
+    In addition, the system monitors the interval size between adjacent generated pitches. Let the maximum allowed melodic leap be $\Delta p_{\max}$. When the generated pitch satisfies
+    \begin{equation}
+        |p_i^r - p_{i-1}^r| > \Delta p_{\max},
+    \end{equation}
+    the post-processing layer applies interval clipping, octave folding, or nearby scale-degree replacement, so that the melodic contour remains within a relatively singable and playable range. This constraint mainly reduces the negative impact of extreme leaps on auditory continuity.
+\end{enumerate}
+
+In summary, the \texttt{pentatonic\_2bar\_4\_4} style constraint layer provides a reproducible, testable, and stylistically focused generation mode through temporal boundary control, pentatonic pitch projection, rhythmic quantization, strong-beat stability control, and cadential resolution. It exists as an optional post-processing module. It does not change the generative capability of the underlying Transformer, nor does it replace the default Chromatic Free Improvisation mode. Instead, it extends the controllability of the system in specific style-oriented tasks and experimental evaluations.
+
+\section{Experimental Design and Objective Evaluation}
+\label{sec:call100-evaluation}
+
+This section presents the formal objective evaluation of the real-time MIDI call-and-response system. Unlike the earlier small-scale Call50 experiment, the evaluation reported here is based on the finalized Call100 benchmark. The test set is expanded to 100 call phrases, the experiment contains 27000 generated response records, and the comparison covers three candidate strategies: \texttt{amt\_small\_raw}, \texttt{amt\_small\_controlled}, and \texttt{motif\_transform\_baseline}. The goal of this section is not to replace human listening judgment with a single objective score. Instead, it establishes a reproducible structural proxy for parameter selection, strategy comparison, and failure-mode analysis.
+
+\subsection{Evaluation Goals}
+\label{subsec:eval-goals}
+
+The evaluation is designed to answer the following questions:
+\begin{enumerate}
+    \item Whether phrase-level control reduces repetition, extreme leaps, rhythmic fragmentation, and duration mismatch in raw AMT outputs.
+    \item Whether pentatonic style constraints and sampling presets improve tonal stability, rhythmic regularity, and cadential closure.
+    \item What strengths and weaknesses are shown by \texttt{amt\_small\_controlled}, \texttt{amt\_small\_raw}, and \texttt{motif\_transform\_baseline} under objective structural metrics.
+    \item Whether parameter search can identify more stable generation strategies than default settings and reveal trade-offs among strategies.
+    \item How objective metrics should be distinguished from subjective musical quality, so that a structural proxy score is not directly equated with sounding better.
+\end{enumerate}
+
+The Call100 results do not support the simplified claim that controlled AMT is universally superior to the rule-based baseline. A more accurate conclusion is that phrase-level control substantially improves raw AMT outputs, while the rule-based motif transformation baseline remains a strong competitor under the current structural proxy metrics and obtains a slightly higher overall mean score. Therefore, the value of \texttt{amt\_small\_controlled} should be described as improved controllability relative to raw AMT and as generative potential relative to the rule-based baseline, rather than as dominance on every objective metric.
+
+\subsection{Construction of the Call100 Benchmark}
+\label{subsec:call100-dataset}
+
+The Call100 benchmark contains 100 call phrases and extends the evaluation from early demonstrations and small-scale stress testing to a mixed-distribution structural robustness test. The original Call50 benchmark includes 10 artificial stress-test calls and 40 real public MIDI fragments. On top of this set, this work adds 50 two-bar melody fragments from the POP909 dataset \citep{wang2020pop909}. The final source-dataset distribution is 50 calls from \texttt{calls\_50} and 50 calls from \texttt{POP909}. The origin distribution is 10 \texttt{artificial\_stress} calls, 40 \texttt{real\_public\_dataset} calls, and 50 \texttt{public\_midi\_extract} calls.
+
+Table~\ref{tab:call100-dataset} summarizes the composition of Call100. This design preserves the diagnostic value of artificial stress cases while adding public dataset excerpts to test generalization under more realistic melodic input distributions. Due to local data availability, the originally planned MAESTRO, ASAP, Lakh/Slakh, and GiantMIDI sources were not imported in this reproducible run. The missing sources were recorded in the dataset report, and the public additions were backfilled from the locally available POP909 excerpts. This preserves the full experiment scale and generation pipeline while avoiding unsupported claims about unavailable sources.
+
+\begin{table}[htbp]
+\centering
+\caption{Composition of the Call100 benchmark}
+\label{tab:call100-dataset}
+\begin{tabular}{llr}
+\toprule
+Grouping field & Value & Number of calls \\
+\midrule
+source dataset & \texttt{calls\_50} & 50 \\
+source dataset & \texttt{POP909} & 50 \\
+\midrule
+origin & \texttt{artificial\_stress} & 10 \\
+origin & \texttt{real\_public\_dataset} & 40 \\
+origin & \texttt{public\_midi\_extract} & 50 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Candidate Strategies and Parameter Presets}
+\label{subsec:candidates-presets}
+
+The formal experiment compares three candidate strategies, summarized in Table~\ref{tab:candidate-strategies}. The raw AMT condition directly uses the AMT generator without external phrase-level control. The controlled AMT condition keeps the same generator but adds call profiling, prompt cleaning, repetition suppression, fallback generation, and duration matching. The motif baseline does not use a neural generator; instead, it produces responses through rule-based motif transformation and is treated as a strong structural baseline.
+
+\begin{table}[htbp]
+\centering
+\caption{Candidate strategies in the Call100 experiment}
+\label{tab:candidate-strategies}
+\small
+\begin{tabular}{p{0.34\linewidth}p{0.52\linewidth}}
+\toprule
+Candidate ID & Description \\
+\midrule
+\texttt{amt\_small\_raw} & Raw AMT response generation without external phrase-level control. \\
+\texttt{amt\_small\_controlled} & AMT response generation with call profiling, repetition suppression, fallback generation, and duration matching. \\
+\texttt{motif\_transform\_baseline} & Rule-based motif transformation baseline used as a strong non-neural comparison. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The experiment uses six parameter presets, listed in Table~\ref{tab:parameter-presets}. Each call, preset, and candidate combination is run for 15 trials. The total experiment scale is therefore:
+
+\begin{equation}
+100 \;\mathrm{calls} \times 6 \;\mathrm{presets} \times 3 \;\mathrm{candidates} \times 15 \;\mathrm{trials}
+= 27000.
+\end{equation}
+
+\begin{table}[htbp]
+\centering
+\caption{Parameter presets used in the Call100 experiment}
+\label{tab:parameter-presets}
+\small
+\begin{tabular}{ll}
+\toprule
+Preset group & Preset ID \\
+\midrule
+No-theory control & \texttt{pentatonic\_no\_theory} \\
+Balanced setting & \texttt{pentatonic\_balanced} \\
+Conservative setting & \texttt{pentatonic\_conservative} \\
+Creative setting & \texttt{pentatonic\_creative} \\
+Wide creative setting & \texttt{pentatonic\_creative\_wide} \\
+Low-temperature setting & \texttt{pentatonic\_low\_temp\_no\_strongbeat} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Each preset/candidate pair contains 1500 samples. The validation file confirms that the full objective-results table contains exactly 27000 rows, the number of preset/candidate/call groups is 1800, the validation summary has status \texttt{passed}, and there are no empty objective scores, missing response MIDI files, or unknown call IDs.
+
+\subsection{Objective Metric System}
+\label{subsec:metrics}
+
+To avoid evaluating generated music with only a single similarity score or a small number of isolated indicators, the objective evaluation is organized into six groups of structural proxy metrics, as shown in Table~\ref{tab:metric-groups}. These metrics cover tonal stability, rhythmic quality, melodic motion, repetition control, pitch diversity, and structural redundancy.
+
+\begin{table}[htbp]
+\centering
+\caption{Objective metric groups}
+\label{tab:metric-groups}
+\begin{tabular}{p{0.22\linewidth}p{0.64\linewidth}}
+\toprule
+Metric group & Representative metrics \\
+\midrule
+Tonality & pitch-scale rate (PSR), strong-beat stable rate, cadence score \\
+Rhythm & qualified note rate (QN), qualified rhythm rate (QRF), groove similarity \\
+Melodic motion & stepwise rate, tone span ratio, maximum interval \\
+Repetition control & consecutive pitch repetition (CPR), longest repeat run \\
+Pitch diversity & pitch-class histogram entropy (PCHE), used pitch classes (UPC) \\
+Structural redundancy & compression ratio \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The overall \texttt{objective\_score} is computed as a weighted combination of these six categories:
+
+\begin{equation}
+\begin{aligned}
+\mathrm{objective\_score}
+= \mathrm{weighted\_sum}(&\mathrm{tonality}, \mathrm{rhythm}, \mathrm{interval},\\
+&\mathrm{repetition}, \mathrm{pitch\_diversity}, \mathrm{compression}).
+\end{aligned}
+\end{equation}
+
+The \texttt{objective\_score} used in this work emphasizes structural stability, controllability, and generation robustness. It is therefore appropriate for candidate screening and failure-mode analysis, but it should not be treated as a standalone substitute for human listening evaluation. In other words, the objective metrics are reproducible proxies for structural quality rather than complete replacements for perceived musicality \citep{ji2023survey,lerch2025evaluation}.
+
+\subsection{Call100 Leaderboard and Result Analysis}
+\label{subsec:leaderboard}
+
+Table~\ref{tab:call100-leaderboard} reports the top five preset/candidate pairs in the formal Call100 experiment. The two highest-scoring entries are both motif-baseline settings, while the next three entries are controlled-AMT settings. The best overall mean objective score is 0.766679, and the best controlled-AMT score is 0.764335. This ranking already suggests the central result of the experiment: external control makes AMT much stronger than its raw version, but the rule-based motif baseline remains highly competitive under the current structural proxy score.
+
+\begin{table}[htbp]
+\centering
+\caption{Top five entries in the Call100 objective leaderboard}
+\label{tab:call100-leaderboard}
+\small
+\begin{tabular}{rllrr}
+\toprule
+Rank & Preset label & Candidate strategy & Mean score & Samples \\
+\midrule
+1 & Balanced & Motif baseline & 0.766679 & 1500 \\
+2 & Conservative & Motif baseline & 0.766142 & 1500 \\
+3 & Conservative & Controlled AMT & 0.764335 & 1500 \\
+4 & Low-temp, no strong beat & Controlled AMT & 0.762782 & 1500 \\
+5 & Balanced & Controlled AMT & 0.760900 & 1500 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\linewidth]{figures/top_objective_scores_call100_compact.pdf}
+\caption{Top objective scores of preset and candidate combinations in the Call100 experiment. Blue bars indicate the motif transformation baseline, and green bars indicate controlled AMT.}
+\label{fig:top-objective-scores-call100}
+\end{figure}
+
+Figure~\ref{fig:top-objective-scores-call100} shows that the top two entries are motif-baseline settings, while controlled AMT occupies ranks 3--5. This confirms that controlled AMT is highly competitive and substantially improves over raw AMT, but it is not uniformly superior to the rule-based motif baseline under the current objective proxy score.
+
+This differs from the earlier Call50 leaderboard, where a low-temperature controlled-AMT setting appeared as the top combination. Under the larger Call100 distribution, the top two positions are occupied by motif baseline settings. This indicates that the rule-based motif transformation approach is very strong under the current structural proxy metrics and should not be framed as a weak baseline. At the same time, controlled AMT still occupies ranks 3--5 and clearly outperforms the best raw AMT setting, showing that the phrase-level control layer provides a substantial improvement over raw AMT generation.
+
+Table~\ref{tab:detailed-comparison} compares several key metrics for rank 1, rank 3, and the best raw AMT combination. The motif baseline achieves a higher tonality score, reflecting the advantage of rule-based pitch organization and cadence control. Controlled AMT performs strongly on duration matching, interval score, and compression score, reflecting the effect of external response-length and structural-shape control. Raw AMT is competitive on some interval-related metrics, but its overall repetition, compression, and note-count behavior are less stable.
+
+\begin{table}[htbp]
+\centering
+\caption{Detailed metric comparison among representative combinations}
+\label{tab:detailed-comparison}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+Combination & Obj. & Tonal. & Rhythm & Interval & Repet. & Dur. match \\
+\midrule
+Rank-1 motif baseline & 0.766679 & 0.972630 & 0.768430 & 0.682771 & 0.753321 & 0.890467 \\
+Rank-3 controlled AMT & 0.764335 & 0.903633 & 0.763440 & 0.741680 & 0.726267 & 0.938038 \\
+Best raw AMT & 0.696652 & 0.911404 & 0.704589 & 0.761084 & 0.542461 & 0.897567 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Overall Candidate Comparison and Statistical Significance}
+\label{subsec:overall-comparison}
+
+Table~\ref{tab:candidate-summary} summarizes the overall performance of the three candidate strategies over 9000 samples each. The motif baseline obtains the highest overall mean objective score, 0.752682. Controlled AMT obtains a mean score of 0.747048, which is substantially higher than the raw AMT mean score of 0.683141.
+
+\begin{table}[htbp]
+\centering
+\caption{Overall comparison of candidate strategies}
+\label{tab:candidate-summary}
+\small
+\begin{tabular}{p{0.26\linewidth}r r p{0.38\linewidth}}
+\toprule
+Candidate strategy & Samples & Mean score & Interpretation \\
+\midrule
+\texttt{motif\_transform\_baseline} & 9000 & 0.752682 & Structurally stable, strong in tonality and cadence, and a strong baseline under the current objective metrics. \\
+\texttt{amt\_small\_controlled} & 9000 & 0.747048 & Clearly better than raw AMT, with better duration matching, rhythmic validity, and compression structure, but with frequent fallback activation. \\
+\texttt{amt\_small\_raw} & 9000 & 0.683141 & Without external control, repetition, extreme movement, and structural redundancy are more visible. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\linewidth]{figures/candidate_mean_score_with_ci_compact.pdf}
+\caption{Mean objective score and 95\% confidence interval for each candidate strategy in the Call100 experiment.}
+\label{fig:candidate-mean-score-with-ci}
+\end{figure}
+
+Figure~\ref{fig:candidate-mean-score-with-ci} shows a clear separation between raw AMT and the two controlled or rule-based strategies. Controlled AMT substantially improves over raw AMT, while the motif baseline remains slightly higher under the current objective proxy score. This supports the conclusion that phrase-level control is effective, but that the rule-based motif baseline should still be treated as a strong comparison method.
+
+The paired bootstrap tests are shown in Table~\ref{tab:bootstrap-tests}. Controlled AMT improves over raw AMT by +0.063907 on average, with a 95\% confidence interval of [0.061668, 0.066294] and bootstrap $p=0.000000$. This provides stable statistical evidence that phrase-level control improves raw AMT generation. By contrast, controlled AMT is slightly below the motif baseline overall, with a mean difference of -0.005633, a 95\% confidence interval of [-0.007882, -0.003501], and bootstrap $p=0.000000$. The motif baseline improves over raw AMT by +0.069541, with a 95\% confidence interval of [0.067351, 0.072127].
+
+\begin{table}[htbp]
+\centering
+\caption{Paired bootstrap tests between candidate strategies}
+\label{tab:bootstrap-tests}
+\small
+\begin{tabular}{p{0.34\linewidth}r p{0.25\linewidth}r}
+\toprule
+Comparison & Mean difference & 95\% CI & bootstrap $p$ \\
+\midrule
+\texttt{controlled - raw} & +0.063907 & [0.061668, 0.066294] & 0.000000 \\
+\texttt{controlled - motif} & -0.005633 & [-0.007882, -0.003501] & 0.000000 \\
+\texttt{motif - raw} & +0.069541 & [0.067351, 0.072127] & 0.000000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\linewidth]{figures/controlled_vs_raw_by_preset_compact.pdf}
+\caption{Objective-score improvement of controlled AMT over raw AMT under each parameter preset.}
+\label{fig:controlled-vs-raw-by-preset}
+\end{figure}
+
+Figure~\ref{fig:controlled-vs-raw-by-preset} shows that controlled AMT improves over raw AMT under every parameter preset. The largest gain appears in the low-temperature setting, while the creative and creative-wide settings still show positive but smaller improvements. This indicates that phrase-level control is not only effective in one favorable preset, but consistently improves raw AMT generation across the full parameter search.
+
+The conclusion should therefore be stated conservatively. External phrase-level control significantly improves raw AMT outputs. However, under the current objective proxies, which emphasize tonal stability, rhythmic regularity, and repetition control, the rule-based motif transformation baseline remains highly competitive. This indicates that the neural generative part of the system still requires further evaluation through listening tests, creativity-oriented assessment, and live interaction studies.
+
+\subsection{Dataset Source Robustness and Failure-Case Analysis}
+\label{subsec:robustness-failure}
+
+The grouped statistics of Call100 make it possible to examine whether the results are driven only by a small number of easy samples. Table~\ref{tab:source-origin-summary} shows that the original Call50 subset obtains a mean score of 0.740086, higher than the added POP909 subset score of 0.715161. By origin, \texttt{artificial\_stress} and \texttt{real\_public\_dataset} obtain similar scores, 0.742780 and 0.739413 respectively. The \texttt{public\_midi\_extract} group scores lower, at 0.715161.
+
+\begin{table}[htbp]
+\centering
+\caption{Performance by source dataset and origin}
+\label{tab:source-origin-summary}
+\begin{tabular}{llrr}
+\toprule
+Grouping field & Value & Samples & Mean score \\
+\midrule
+source dataset & \texttt{calls\_50} & 13500 & 0.740086 \\
+source dataset & \texttt{POP909} & 13500 & 0.715161 \\
+\midrule
+origin & \texttt{artificial\_stress} & 2700 & 0.742780 \\
+origin & \texttt{real\_public\_dataset} & 10800 & 0.739413 \\
+origin & \texttt{public\_midi\_extract} & 13500 & 0.715161 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This difference should not be interpreted as a failure on POP909. Rather, it indicates that the added public MIDI excerpts form a more difficult test distribution. In particular, the POP909 subset has a higher average maximum interval, 12.093 compared with 8.360 for \texttt{calls\_50}, and a higher average note count, 15.905 compared with 13.588. These input characteristics increase the difficulty of response planning and duration matching.
+
+The category-level results provide a similar picture. In Table~\ref{tab:category-summary}, \texttt{pentatonic\_clear\_motif} and \texttt{modal\_question} obtain the highest mean scores, suggesting that clear motifs and explicit modal-question structures are easier for the current control strategy to handle. Lower-scoring categories such as \texttt{sparse\_cadential}, \texttt{sparse\_short}, and \texttt{expressive\_rubato} reveal weaknesses in rhythm estimation, duration matching, and structural filling for short, sparse, or rubato-like inputs.
+
+\begin{table}[htbp]
+\centering
+\caption{Examples of high- and low-scoring categories}
+\label{tab:category-summary}
+\small
+\begin{tabular}{p{0.38\linewidth}rrp{0.28\linewidth}}
+\toprule
+Category & Samples & Mean score & Interpretation \\
+\midrule
+\texttt{pentatonic\_clear\_motif} & 270 & 0.787362 & Clear motif and stable scale structure. \\
+\texttt{modal\_question} & 270 & 0.787159 & Clear question-like phrasing and cadential target. \\
+\texttt{syncopation} & 270 & 0.768083 & Distinct rhythmic profile remains structurally manageable. \\
+\midrule
+\texttt{expressive\_rubato} & 2160 & 0.691445 & Free timing increases rhythm and duration-matching difficulty. \\
+\texttt{sparse\_short} & 1350 & 0.667246 & Low input information makes structural filling less stable. \\
+\texttt{sparse\_cadential} & 270 & 0.665250 & Sparse cadential fragments often lead to short or weak responses. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Failure cases also require careful interpretation. The experiment writes 5377 failure-case diagnostic rows, but these rows are diagnostic labels rather than 5377 generation failures. The most frequent exact reason is fallback use, with 3555 rows; bottom-5\% objective-score cases follow with 1225 rows, and poor duration matching accounts for 322 rows. For controlled AMT, the fallback rate is approximately 41.46\%, and the mean repetition resampling count is approximately 1.639 per sample. These values should be interpreted as the intervention frequency of the control layer against model degradation tendencies, not as a direct failure rate. The more informative weak points are bottom-5\% objective score cases, poor duration matching, and very low note-count outputs, because these reflect concrete issues in response length, rhythmic stability, and structural generation.
+
+\subsection{Additional Result Patterns}
+\label{subsec:additional-result-patterns}
+
+Beyond the leaderboard and summary tables, the Call100 result summaries reveal several additional patterns across presets, candidates, and call categories. The top entries are tightly clustered: motif baseline occupies the first two positions, while controlled AMT follows closely in ranks 3--5. This supports the interpretation that controlled AMT is competitive, but not uniformly superior under the current objective proxy score.
+
+Candidate-level confidence intervals further show a clear separation between raw AMT and the two controlled or rule-based strategies. The controlled-minus-raw comparison is positive across all presets, indicating that the phrase-level control layer improves AMT output consistently rather than only under one favorable setting. Category-level results also show that sparse, rubato-like, or short cadential inputs are more difficult than clear motif or modal-question inputs. These patterns are consistent with the quantitative results in Sections~\ref{subsec:overall-comparison} and~\ref{subsec:robustness-failure}.
+
+\subsection{Scope of Subjective Evaluation}
+\label{subsec:subjective-evaluation-scope}
+
+This paper does not include a formal blind listening test. The evaluation is intentionally limited to large-scale objective structural analysis, because the main goal of this section is to compare candidate strategies reproducibly and to identify failure modes. Therefore, the results should be interpreted as evidence about structural stability, controllability, and robustness, not as direct proof that one system is always more musically pleasing to human listeners.
+
+This distinction is especially important for the comparison between controlled AMT and the motif baseline. The motif baseline performs slightly better under the current objective proxy score, but controlled AMT may still provide greater generative variation or interaction potential in actual performance. These qualities are outside the scope of the present objective evaluation and should not be claimed as experimentally verified in this paper.
+
+\section{Conclusion and Future Work}
+\label{sec:conclusion-future-work}
+
+This paper presented a real-time MIDI call-and-response generation system for human-AI musical co-performance. The work did not aim to train a new music model from scratch. Instead, it focused on adapting an autoregressive Transformer-based symbolic music generator to a live interaction setting, where the system must detect the end of a human call, generate a response under latency constraints, and reduce unstable outputs such as excessive repetition, empty responses, rhythmic fragmentation, and duration mismatch.
+
+The proposed system combines continuous-time MIDI event modeling, adaptive endpoint detection, asynchronous decoding, speculative preload, phrase-level musical control, optional style constraints, and objective evaluation. The final Call100 experiment further evaluates the system at a larger scale, with 100 call phrases, six parameter presets, three candidate strategies, and 27000 generated response records.
+
+\subsection{Research Summary}
+\label{subsec:research-summary}
+
+The main contributions of this work are fourfold. First, the paper formulates MIDI call-and-response as a continuous-time symbolic event sequence and expresses response generation as a conditional autoregressive problem. This representation is better suited to free MIDI improvisation than a fixed time-step grid because it preserves onset time, duration, and pitch information.
+
+Second, the paper designs a real-time MIDI endpoint detection mechanism. The system estimates local onset density, corrects chordal input through onset clustering, and uses a cancellable candidate endpoint with a confirmation window. This allows the system to respond after a likely phrase ending while reducing the risk of interrupting the performer during short hesitations.
+
+Third, the paper implements a low-latency response pipeline based on asynchronous decoding, micro-buffered playback, and speculative preload. These mechanisms allow endpoint confirmation, model inference, and MIDI playback to overlap, reducing perceived response delay in real-time interaction.
+
+Fourth, the paper introduces a phrase-level control layer and an optional style constraint layer. The control layer analyzes the human call, constructs a response plan, suppresses degenerate repetition, applies fallback generation when needed, and adjusts response duration. The style constraint layer provides a controllable pentatonic two-bar mode without replacing the system's more open chromatic improvisation mode.
+
+The Call100 evaluation shows that controlled AMT is substantially stronger than raw AMT under the objective metric system. Controlled AMT improves over raw AMT by +0.063907 in mean objective score, with a 95\% confidence interval of [0.061668, 0.066294]. However, the motif transformation baseline remains slightly stronger under the current structure-oriented proxy score. This result suggests that phrase-level control is effective, but also that rule-based motivic transformation remains a serious baseline for short call-and-response generation.
+
+\subsection{Limitations}
+\label{subsec:limitations}
+
+Several limitations remain. First, the system mainly adapts an existing pretrained symbolic music model rather than training a dedicated call-and-response model. This makes the system practical, but it also means that the generator is not optimized specifically for live turn-taking.
+
+Second, the objective metrics used in Call100 are structural proxies. They can measure tonal stability, rhythmic consistency, repetition control, pitch diversity, and duration matching, but they cannot fully represent human musical preference. A response with a high objective score is not necessarily the most expressive or musically satisfying response.
+
+Third, the strong performance of the motif baseline shows that the advantage of controlled AMT cannot be proven only by \texttt{objective\_score}. The neural generator may offer more variety and generative potential, but these qualities require listening tests and live interaction studies for proper evaluation.
+
+Fourth, the controlled system still relies on fallback and resampling. These mechanisms improve robustness, but their frequent activation also indicates that the model still tends toward degenerate repetition or unstable response length without external correction.
+
+Finally, real-time performance depends on hardware, MIDI routing, model size, and local inference conditions. A broader deployment study would be needed to measure latency and stability across different practical performance environments.
+
+\subsection{Future Work}
+\label{subsec:future-work}
+
+Future work can proceed in several directions. A larger human improvisation call-and-response dataset would make it possible to train and evaluate models more directly for interactive response generation. A dedicated real-time response model could learn phrase length, motivic continuation, register choice, rhythmic density, and cadential behavior from data, reducing the need for heavy post-processing.
+
+The musical control space can also be expanded. Future versions should incorporate chord context, velocity, articulation, register, pedal behavior, and phrase-level dynamics. The style constraint layer can be extended beyond the current pentatonic mode to support blues, jazz, modal, chromatic, and mixed-scale improvisation.
+
+Finally, formal blind listening tests and live performance studies should be added. These studies can compare human ratings with \texttt{objective\_score}, identify where objective metrics agree or disagree with perception, and evaluate whether the system feels responsive and musically useful in real co-performance settings. Overall, the next step is not only to improve structural scores, but also to connect objective robustness with human musical judgment and live interaction experience.
+
+
+\section*{AI Tool Usage Statement}
+\label{sec:ai-tool-usage}
+
+AI tools were used in this project as auxiliary research, writing, and programming support. This disclosure refers to general-purpose AI assistance used during project preparation; the autoregressive Transformer system evaluated in this paper is part of the research object itself and is described separately in the methodology and experiments.
+
+The authors used OpenAI ChatGPT/Codex in three main places. First, during software development, AI assistance was used to inspect Python and MIDI-processing code, identify possible implementation errors, debug LaTeX or Python issues, and draft small validation or analysis procedures. All code execution, experiment running, and result validation were performed and checked by the authors. Second, during manuscript preparation, AI assistance was used to improve English wording, reorganize paragraphs, refine LaTeX formatting, and make tables and figure descriptions clearer. Third, during result reporting, AI assistance was used to help summarize verified CSV and log outputs and convert checked numerical results into concise academic prose.
+
+AI tools were not used to fabricate experimental data, replace the Call100 objective evaluation, make unsupervised final research decisions, or generate references accepted without checking. All numerical claims, tables, figures, citations, and final conclusions were reviewed by the authors against the local experiment outputs, source code, and cited literature.
+
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

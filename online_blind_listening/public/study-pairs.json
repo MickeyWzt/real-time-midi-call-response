@@ -1,0 +1,74 @@
+[
+  {
+    "pair_id": "P001",
+    "call_file": "midi/P001_call.mid",
+    "a_file": "midi/P001_A.mid",
+    "b_file": "midi/P001_B.mid"
+  },
+  {
+    "pair_id": "P002",
+    "call_file": "midi/P002_call.mid",
+    "a_file": "midi/P002_A.mid",
+    "b_file": "midi/P002_B.mid"
+  },
+  {
+    "pair_id": "P003",
+    "call_file": "midi/P003_call.mid",
+    "a_file": "midi/P003_A.mid",
+    "b_file": "midi/P003_B.mid"
+  },
+  {
+    "pair_id": "P004",
+    "call_file": "midi/P004_call.mid",
+    "a_file": "midi/P004_A.mid",
+    "b_file": "midi/P004_B.mid"
+  },
+  {
+    "pair_id": "P005",
+    "call_file": "midi/P005_call.mid",
+    "a_file": "midi/P005_A.mid",
+    "b_file": "midi/P005_B.mid"
+  },
+  {
+    "pair_id": "P006",
+    "call_file": "midi/P006_call.mid",
+    "a_file": "midi/P006_A.mid",
+    "b_file": "midi/P006_B.mid"
+  },
+  {
+    "pair_id": "P007",
+    "call_file": "midi/P007_call.mid",
+    "a_file": "midi/P007_A.mid",
+    "b_file": "midi/P007_B.mid"
+  },
+  {
+    "pair_id": "P008",
+    "call_file": "midi/P008_call.mid",
+    "a_file": "midi/P008_A.mid",
+    "b_file": "midi/P008_B.mid"
+  },
+  {
+    "pair_id": "P009",
+    "call_file": "midi/P009_call.mid",
+    "a_file": "midi/P009_A.mid",
+    "b_file": "midi/P009_B.mid"
+  },
+  {
+    "pair_id": "P010",
+    "call_file": "midi/P010_call.mid",
+    "a_file": "midi/P010_A.mid",
+    "b_file": "midi/P010_B.mid"
+  },
+  {
+    "pair_id": "P011",
+    "call_file": "midi/P011_call.mid",
+    "a_file": "midi/P011_A.mid",
+    "b_file": "midi/P011_B.mid"
+  },
+  {
+    "pair_id": "P012",
+    "call_file": "midi/P012_call.mid",
+    "a_file": "midi/P012_A.mid",
+    "b_file": "midi/P012_B.mid"
+  }
+]

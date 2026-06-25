@@ -1,0 +1,3 @@
+buffer_underrun_count,condition,max_latency_ms,mean_first_token_latency_ms,mean_latency_ms,mean_total_generation_ms,p50_latency_ms,p95_latency_ms,p99_latency_ms,sample_count,underrun_rate
+1867,L0_preload_off,815.510000,81.302711,161.302711,1655.312037,136.455450,323.520665,479.574320,9000,0.207444
+320,L1_preload_on,565.510000,81.302711,85.534258,1655.312037,80.000000,80.000000,229.574320,9000,0.035556

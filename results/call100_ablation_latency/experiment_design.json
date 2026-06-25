@@ -1,0 +1,75 @@
+{
+  "created_at": "2026-06-24T11:00:33",
+  "manifest": "D:\\Mickey\\MFP\\ab_tests\\calls_100_public_final\\call100_manifest.csv",
+  "output_dir": "D:\\Mickey\\MFP\\ab_tests\\objective_ablation_call100_trials15_latency",
+  "trials": 15,
+  "seed": 20260622,
+  "presets": [
+    "pentatonic_no_theory",
+    "pentatonic_balanced",
+    "pentatonic_conservative",
+    "pentatonic_creative",
+    "pentatonic_creative_wide",
+    "pentatonic_low_temp_no_strongbeat"
+  ],
+  "variants": [
+    {
+      "variant": "A0_raw_amt",
+      "short": "A0",
+      "module_added": "raw AMT",
+      "base_candidate": "amt_small_raw",
+      "description": "No external control."
+    },
+    {
+      "variant": "A1_prompt_cleaning",
+      "short": "A1",
+      "module_added": "prompt cleaning",
+      "base_candidate": "amt_small_controlled",
+      "description": "Only tail-repeat compression / prompt cleaning is enabled."
+    },
+    {
+      "variant": "A2_repetition_suppression",
+      "short": "A2",
+      "module_added": "repetition suppression",
+      "base_candidate": "amt_small_controlled",
+      "description": "Adds generation-time repetition suppression / resampling."
+    },
+    {
+      "variant": "A3_duration_matching",
+      "short": "A3",
+      "module_added": "duration matching",
+      "base_candidate": "amt_small_controlled",
+      "description": "Adds response duration and note-count matching."
+    },
+    {
+      "variant": "A4_fallback",
+      "short": "A4",
+      "module_added": "motif fallback",
+      "base_candidate": "amt_small_controlled",
+      "description": "Adds motif fallback for empty or invalid neural output."
+    },
+    {
+      "variant": "A5_style_constraint",
+      "short": "A5",
+      "module_added": "style constraint",
+      "base_candidate": "amt_small_controlled",
+      "description": "Adds pentatonic / two-bar / 4-4 response style constraints."
+    },
+    {
+      "variant": "A6_full_controlled",
+      "short": "A6",
+      "module_added": "full controlled",
+      "base_candidate": "amt_small_controlled",
+      "description": "All controlled-AMT modules are enabled."
+    }
+  ],
+  "latency": {
+    "conditions": [
+      "L0_preload_off",
+      "L1_preload_on"
+    ],
+    "preload_window_ms": 250.0,
+    "micro_buffer_ms": 80.0,
+    "underrun_deadline_ms": 80.0
+  }
+}

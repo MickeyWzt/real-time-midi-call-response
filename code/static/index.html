@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MFP Live Studio</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="studio-shell">
+        <aside class="control-rail">
+            <header class="brand-row">
+                <div class="window-dots" aria-hidden="true">
+                    <span class="dot red"></span>
+                    <span class="dot yellow"></span>
+                    <span class="dot green"></span>
+                </div>
+                <div>
+                    <h1>MFP Studio</h1>
+                    <p>Call / Response</p>
+                </div>
+            </header>
+
+            <section class="status-stack" aria-label="System status">
+                <div class="status-pill warning" id="connection-status">Connecting</div>
+                <div class="status-pill idle" id="engine-status">Engine idle</div>
+                <div class="status-pill idle" id="piano-host-status">Piano host ready</div>
+                <div class="status-pill idle" id="web-midi-status">Browser MIDI scanning</div>
+            </section>
+
+            <section class="panel-block">
+                <div class="block-title">
+                    <span>MIDI Input</span>
+                    <button id="refresh-devices" class="icon-btn" title="Refresh MIDI devices" aria-label="Refresh MIDI devices">R</button>
+                </div>
+                <select id="midi-input" class="studio-select"></select>
+                <div id="device-note" class="device-note"></div>
+                <div class="device-grid">
+                    <div>
+                        <span id="midi-count">0</span>
+                        <label>Inputs</label>
+                    </div>
+                    <div>
+                        <span id="output-count">0</span>
+                        <label>Outputs</label>
+                    </div>
+                </div>
+            </section>
+
+            <section class="panel-block">
+                <div class="block-title">
+                    <span>Response Feel</span>
+                    <output id="temp-display">0.9</output>
+                </div>
+                <input id="temperature" type="range" min="0.5" max="1.3" step="0.05" value="0.9">
+            </section>
+
+            <section class="panel-block">
+                <div class="block-title">
+                    <span>Model Engine</span>
+                    <output id="backend-display">AMT</output>
+                </div>
+                <select id="backend-select" class="studio-select">
+                    <option value="amt_small">AMT Small - music-small-800k</option>
+                    <option value="amt_medium">AMT Medium - music-medium-800k</option>
+                    <option value="aria">ARIA - local aria-medium-gen</option>
+                </select>
+                <div id="model-note" class="device-note">Current: AMT / stanford-crfm/music-small-800k</div>
+            </section>
+
+            <section class="transport">
+                <button id="start-btn" class="transport-btn start">Start Engine</button>
+                <button id="stop-btn" class="transport-btn stop hidden">Stop Engine</button>
+                <button id="test-btn" class="transport-btn test">Test Piano</button>
+            </section>
+        </aside>
+
+        <main class="workspace">
+            <section class="top-strip">
+                <div class="metric-cell active">
+                    <label>Source</label>
+                    <strong id="selected-source">Virtual keyboard</strong>
+                </div>
+                <div class="metric-cell">
+                    <label>Round</label>
+                    <strong id="round-id">--</strong>
+                </div>
+                <div class="metric-cell">
+                    <label>State</label>
+                    <strong id="round-state">Idle</strong>
+                </div>
+                <div class="metric-cell">
+                    <label>First Event</label>
+                    <strong id="first-event">--</strong>
+                </div>
+                <div class="metric-cell">
+                    <label>Underruns</label>
+                    <strong id="underruns">0</strong>
+                </div>
+            </section>
+
+            <section class="visual-stage">
+                <div class="stage-header">
+                    <div>
+                        <h2>Live MIDI Visualizer</h2>
+                        <p id="stage-subtitle">Human call and AI response share one piano-roll view.</p>
+                    </div>
+                    <div class="lane-legend">
+                        <span class="human">Human</span>
+                        <span class="ai">AI</span>
+                        <span class="test">Piano</span>
+                    </div>
+                </div>
+                <canvas id="visualizer-canvas"></canvas>
+            </section>
+
+            <section class="console-drawer">
+                <div class="console-title">Live Log</div>
+                <div class="log-panel" id="log-panel"></div>
+            </section>
+
+            <section class="keyboard-deck logic-keyboard-window">
+                <div class="logic-titlebar">
+                    <div class="window-dots window-actions" aria-label="Keyboard window controls">
+                        <button id="keyboard-minimize" class="dot red window-action" type="button" title="Minimize keyboard" aria-label="Minimize keyboard"></button>
+                        <button id="keyboard-compact" class="dot yellow window-action" type="button" title="Compact keyboard" aria-label="Compact keyboard"></button>
+                        <button id="keyboard-expand" class="dot green window-action" type="button" title="Expand keyboard" aria-label="Expand keyboard"></button>
+                    </div>
+                    <strong>MUSICAL TYPING - MFP PIANO</strong>
+                    <span id="audio-status" class="logic-ready">CLICK TO START</span>
+                </div>
+                <div class="keyboard-particle-stage">
+                    <div class="keyboard-grid" aria-hidden="true"></div>
+                    <canvas id="keyboard-particle-canvas"></canvas>
+                </div>
+                <div class="keyboard-toolbar">
+                    <div>
+                        <h2>Virtual Keyboard</h2>
+                        <p>Computer keys A to ; mirror the piano.</p>
+                    </div>
+                    <div class="keyboard-detail-strip">
+                        <span>Sound <strong id="sampler-detail">Autumn Piano</strong></span>
+                        <span>Range <strong id="range-detail">C3 - B5</strong></span>
+                        <span>Sustain <strong id="sustain-detail">CC64 Off</strong></span>
+                    </div>
+                    <div class="keyboard-controls">
+                        <button id="octave-down" class="mini-btn" title="Octave down" aria-label="Octave down">-</button>
+                        <span>Oct <strong id="octave-display">3</strong></span>
+                        <button id="octave-up" class="mini-btn" title="Octave up" aria-label="Octave up">+</button>
+                        <button id="velocity-down" class="mini-btn" title="Velocity down" aria-label="Velocity down">-</button>
+                        <span>Vel <strong id="velocity-display">96</strong></span>
+                        <button id="velocity-up" class="mini-btn" title="Velocity up" aria-label="Velocity up">+</button>
+                    </div>
+                </div>
+                <div class="keyboard-keys" id="keyboard"></div>
+            </section>
+        </main>
+    </div>
+    <script src="/static/app.js"></script>
+</body>
+</html>
