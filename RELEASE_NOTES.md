@@ -2,6 +2,8 @@
 
 Initial public research-code release for **Real-Time MIDI Call-and-Response Generation Using Autoregressive Transformers**.
 
+Zenodo version DOI: https://doi.org/10.5281/zenodo.20838084
+
 ## Included
 
 - realtime MIDI call-and-response engine
