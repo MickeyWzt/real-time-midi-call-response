@@ -127,11 +127,24 @@ Useful files:
 To rerun aggregation from available summaries:
 
 ```powershell
+python -m compileall code
 python code/run_call100_ablation_latency.py --help
 python code/run_call100_objective_search.py --help
 ```
 
 Full regeneration requires third-party model weights and the Call100 MIDI inputs. Generated responses and model caches are excluded from the DOI archive.
+
+## Lightweight Verification
+
+These checks do not require model weights, MIDI hardware, or the excluded raw outputs:
+
+```powershell
+python -m compileall code
+python code/run_call100_objective_search.py --help
+python code/run_call100_ablation_latency.py --help
+```
+
+GitHub Actions runs the same commands on pushes and pull requests so the published repository keeps a minimal syntax and CLI smoke check.
 
 ## GitHub Pages
 

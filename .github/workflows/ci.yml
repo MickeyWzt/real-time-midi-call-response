@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'codex/**'
+  pull_request:
+
+jobs:
+  lightweight-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify code compiles
+        run: python -m compileall code
+
+      - name: Verify aggregation CLIs
+        run: |
+          python code/run_call100_objective_search.py --help
+          python code/run_call100_ablation_latency.py --help
