@@ -19,8 +19,8 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install lightweight test dependency
-        run: python -m pip install mido
+      - name: Install lightweight test dependencies
+        run: python -m pip install mido fastapi uvicorn
 
       - name: Verify code compiles
         run: python -m compileall code
@@ -32,7 +32,5 @@ jobs:
           python code/build_harmonized_call100_evaluation.py --help
           python code/run_endpoint_benchmark.py --help
 
-      - name: Run integrity regression tests
-        run: |
-          python code/test_evaluation_integrity.py
-          python code/test_endpoint_benchmark.py
+      - name: Run regression tests
+        run: python -m unittest discover -s code -p 'test_*.py'
