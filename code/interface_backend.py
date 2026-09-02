@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Optional
 
@@ -19,7 +19,6 @@ PROJECT_DEPS = ROOT / ".python_deps"
 if PROJECT_DEPS.exists():
     sys.path.insert(0, str(PROJECT_DEPS))
 
-import mido
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -30,11 +29,17 @@ from vst_host_manager import get_piano_host_manager
 
 STATIC_DIR = ROOT / "code" / "static"
 LIVE_SCRIPT = ROOT / "code" / "live_call_response.py"
+MIDI_HELPER_SCRIPT = ROOT / "code" / "midi_io_helper.py"
 LIVE_LOG_PATH = ROOT / "logs" / "mfp_live_studio_live.log"
+LIVE_CONTROL_PATH = ROOT / "logs" / "mfp_live_controls.jsonl"
 DEFAULT_OUTPUT_PORT = "Python_OUT"
+DEFAULT_MELODY_OUTPUT_PORT = "Logic Pro Virtual In"
+LIVE_BACKEND = "amt"
+LIVE_RESPONSE_STRATEGY = "streaming_amt"
 DEFAULT_MODEL_ID = "stanford-crfm/music-small-800k"
 DEFAULT_ARIA_MODEL_ID = str(ROOT / "model_weights" / "aria-medium-gen")
 DEVICE_POLL_SECONDS = 1.0
+MIDI_ERROR_RETRY_SECONDS = 5.0
 
 IGNORED_INPUT_TERMS = (
     "python_in",
@@ -107,10 +112,9 @@ def choose_virtual_keyboard_output(outputs: list[str]) -> Optional[str]:
 
 
 def choose_audio_output(outputs: list[str], piano_host_available: bool = True) -> Optional[str]:
-    if piano_host_available:
-        loopback_output = resolve_port(DEFAULT_OUTPUT_PORT, outputs)
-        if loopback_output:
-            return loopback_output
+    loopback_output = resolve_port(DEFAULT_OUTPUT_PORT, outputs)
+    if loopback_output:
+        return loopback_output
 
     return (
         resolve_port("Microsoft GS", outputs)
@@ -120,24 +124,29 @@ def choose_audio_output(outputs: list[str], piano_host_available: bool = True) -
 
 
 def needs_piano_host(output_port: str) -> bool:
-    return DEFAULT_OUTPUT_PORT.casefold() in output_port.casefold()
+    return os.name == "nt" and DEFAULT_OUTPUT_PORT.casefold() in output_port.casefold()
 
 
 @dataclass
 class StudioConfig:
-    backend: str = "amt"
+    backend: str = LIVE_BACKEND
+    response_strategy: str = LIVE_RESPONSE_STRATEGY
     model_id: str = DEFAULT_MODEL_ID
     aria_model_id: str = DEFAULT_ARIA_MODEL_ID
-    response_seconds: float = 8.0
-    max_events: int = 16
-    top_p: float = 0.98
-    temperature: float = 0.9
+    response_seconds: float = 3.0
+    max_events: int = 12
+    top_p: float = 0.95
+    temperature: float = 0.75
     latency_mode: str = "fast"
-    max_underrun_seconds: float = 1.5
-    min_cutoff: float = 0.45
+    max_underrun_seconds: float = 4.5
+    min_cutoff: Optional[float] = None
+    max_cutoff: Optional[float] = None
     chord_cluster_window: float = 0.08
     endpoint_confirm_delay: float = 0.15
+    amt_generation_budget: float = 4.0
+    partial_fallback_max_share: float = 0.50
     output_port: str = DEFAULT_OUTPUT_PORT
+    melody_output_port: str = DEFAULT_MELODY_OUTPUT_PORT
 
 
 @dataclass
@@ -162,6 +171,45 @@ class DeviceState:
     selected_output: Optional[str] = None
     virtual_keyboard_output: Optional[str] = None
     virtual_mode: bool = True
+    midi_error: Optional[str] = None
+
+
+@dataclass
+class RhythmState:
+    state: str = "idle"
+    tap_count: int = 0
+    bpm: float = 100.0
+    confidence: float = 0.0
+    bars: int = 1
+    steps_per_bar: int = 16
+    pattern: list[int] = field(default_factory=list)
+    loop_seconds: float = 0.0
+    learning: bool = False
+    playing: bool = False
+    replacing: bool = False
+    stopping: bool = False
+    saved_slots: list[str] = field(default_factory=list)
+    current_slot: Optional[str] = None
+    queued_slot: Optional[str] = None
+
+
+@dataclass
+class LoopSlotState:
+    name: str
+    has_content: bool = False
+    event_count: int = 0
+    loop_seconds: float = 0.0
+    playing: bool = False
+    stopping: bool = False
+
+
+@dataclass
+class LoopBankState:
+    mode: str = "response"
+    latest_ready: bool = False
+    slots: list[LoopSlotState] = field(
+        default_factory=lambda: [LoopSlotState(name=name) for name in ("A", "B", "C", "D")]
+    )
 
 
 class ConnectionManager:
@@ -192,14 +240,17 @@ class LiveStudioController:
         self.config = StudioConfig()
         self.session = SessionState()
         self.devices = DeviceState()
+        self.rhythm = RhythmState()
+        self.loop_bank = LoopBankState()
         self.process: Optional[subprocess.Popen[str]] = None
         self.manager = ConnectionManager()
         self.piano_host = get_piano_host_manager()
         self.loop: Optional[asyncio.AbstractEventLoop] = None
-        self.virtual_out: Optional[mido.ports.BaseOutput] = None
-        self.output_out: Optional[mido.ports.BaseOutput] = None
-        self._last_device_signature: Optional[tuple[tuple[str, ...], tuple[str, ...]]] = None
+        self._last_device_signature: Optional[
+            tuple[tuple[str, ...], tuple[str, ...], Optional[str]]
+        ] = None
         self._round_data: dict[str, Any] = {}
+        self._next_midi_probe_at = 0.0
 
     def attach_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self.loop = loop
@@ -211,9 +262,56 @@ class LiveStudioController:
             lambda: asyncio.create_task(self.manager.broadcast(payload))
         )
 
-    def refresh_devices(self, keep_manual: bool = False) -> DeviceState:
-        inputs = mido.get_input_names()
-        outputs = mido.get_output_names()
+    def _run_midi_helper(
+        self,
+        *args: str,
+        timeout: float = 3.0,
+    ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+        cmd = [sys.executable, str(MIDI_HELPER_SCRIPT), *args]
+        try:
+            completed = subprocess.run(
+                cmd,
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return None, "CoreMIDI helper timed out."
+        except OSError as exc:
+            return None, f"Could not start CoreMIDI helper: {exc}"
+
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            payload = None
+        if completed.returncode != 0:
+            if isinstance(payload, dict) and payload.get("error"):
+                return None, str(payload["error"])
+            detail = (completed.stderr or completed.stdout).strip().splitlines()
+            message = detail[-1] if detail else "No diagnostic output."
+            return None, f"CoreMIDI helper exited {completed.returncode}: {message}"
+        if payload is None:
+            return None, "CoreMIDI helper returned invalid output."
+        if not payload.get("ok"):
+            return None, str(payload.get("error") or "CoreMIDI helper failed.")
+        return payload, None
+
+    def refresh_devices(self, keep_manual: bool = False, force: bool = False) -> DeviceState:
+        now = time.monotonic()
+        if not force and now < self._next_midi_probe_at:
+            return self.devices
+
+        payload, midi_error = self._run_midi_helper("--list-ports")
+        if midi_error:
+            self._next_midi_probe_at = now + MIDI_ERROR_RETRY_SECONDS
+            self.devices = replace(self.devices, midi_error=midi_error)
+            return self.devices
+
+        self._next_midi_probe_at = now + DEVICE_POLL_SECONDS
+        inputs = list(payload.get("inputs", [])) if payload else []
+        outputs = list(payload.get("outputs", [])) if payload else []
         selected_input, virtual_mode = choose_default_input(inputs)
         selected_output = choose_audio_output(outputs, self.piano_host.status().available)
         virtual_output = choose_virtual_keyboard_output(outputs)
@@ -229,6 +327,7 @@ class LiveStudioController:
             selected_output=selected_output,
             virtual_keyboard_output=virtual_output,
             virtual_mode=virtual_mode,
+            midi_error=None,
         )
         return self.devices
 
@@ -237,7 +336,7 @@ class LiveStudioController:
             try:
                 old_input = self.devices.selected_input
                 devices = self.refresh_devices(keep_manual=self.session.running)
-                signature = (tuple(devices.inputs), tuple(devices.outputs))
+                signature = (tuple(devices.inputs), tuple(devices.outputs), devices.midi_error)
                 if signature != self._last_device_signature:
                     self._last_device_signature = signature
                     await self.broadcast_devices()
@@ -274,37 +373,77 @@ class LiveStudioController:
             {"type": "piano_host_status", **asdict(self.piano_host.status())}
         )
 
-    def _open_virtual_out(self) -> Optional[mido.ports.BaseOutput]:
+    async def broadcast_rhythm(self) -> None:
+        await self.manager.broadcast({"type": "rhythm_status", **asdict(self.rhythm)})
+
+    async def broadcast_loop_bank(self) -> None:
+        await self.manager.broadcast({"type": "loop_bank_status", **asdict(self.loop_bank)})
+
+    def send_live_control(self, action: str, **values: Any) -> bool:
+        if self.process is None or self.process.poll() is not None:
+            self._threadsafe_broadcast(
+                {"type": "error", "message": "Start the AI engine before using live controls."}
+            )
+            return False
+        try:
+            LIVE_CONTROL_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with LIVE_CONTROL_PATH.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"action": action, **values}) + "\n")
+            return True
+        except OSError as exc:
+            self._threadsafe_broadcast(
+                {"type": "error", "message": f"Could not send drum control: {exc}"}
+            )
+            return False
+
+    def _send_note(self, port_name: str, kind: str, pitch: int, velocity: int) -> bool:
+        _, error = self._run_midi_helper(
+            "--send-note",
+            "--output-port",
+            port_name,
+            "--message",
+            kind,
+            "--pitch",
+            str(int(pitch)),
+            "--velocity",
+            str(int(velocity)),
+        )
+        if error:
+            self._threadsafe_broadcast({"type": "error", "message": error})
+            return False
+        return True
+
+    def panic_all_outputs(self) -> bool:
+        ports = {self.config.melody_output_port, self.config.output_port}
+        ok = True
+        for port_name in sorted(port for port in ports if port):
+            _, error = self._run_midi_helper("--panic", "--output-port", port_name, timeout=5.0)
+            if error:
+                ok = False
+                self._threadsafe_broadcast({"type": "error", "message": error})
+        self._threadsafe_broadcast(
+            {
+                "type": "panic_status",
+                "ok": ok,
+                "message": "所有旋律、鼓和延音已释放" if ok else "部分 MIDI 输出未能释放",
+            }
+        )
+        return ok
+
+    def send_virtual_note(self, kind: str, pitch: int, velocity: int = 100) -> None:
         self.refresh_devices(keep_manual=True)
         port_name = self.devices.virtual_keyboard_output
         if port_name is None:
-            return None
-        if self.virtual_out is not None and not self.virtual_out.closed:
-            return self.virtual_out
-        self.virtual_out = mido.open_output(port_name)
-        return self.virtual_out
-
-    def _open_output_out(self) -> Optional[mido.ports.BaseOutput]:
-        self.refresh_devices(keep_manual=True)
-        port_name = self.devices.selected_output
-        if port_name is None:
-            return None
-        if self.output_out is not None and not self.output_out.closed:
-            return self.output_out
-        self.output_out = mido.open_output(port_name)
-        return self.output_out
-
-    def send_virtual_note(self, kind: str, pitch: int, velocity: int = 100) -> None:
-        outport = self._open_virtual_out()
-        if outport is None:
             self._threadsafe_broadcast(
                 {
                     "type": "error",
-                    "message": "Virtual keyboard needs a loopMIDI Python_IN output port.",
+                    "message": self.devices.midi_error
+                    or "Virtual keyboard needs an IAC Python_IN output port.",
                 }
             )
             return
-        outport.send(mido.Message(kind, note=int(pitch), velocity=int(velocity)))
+        if not self._send_note(port_name, kind, pitch, velocity):
+            return
         self._threadsafe_broadcast(
             {
                 "type": "visual_note",
@@ -317,17 +456,20 @@ class LiveStudioController:
         )
 
     def send_test_note(self, pitch: int = 60, velocity: int = 92, duration: float = 0.45) -> None:
-        outport = self._open_output_out()
-        if outport is None:
+        self.refresh_devices(keep_manual=True)
+        port_name = resolve_port(self.config.melody_output_port, self.devices.outputs)
+        if port_name is None:
             self._threadsafe_broadcast(
                 {
                     "type": "error",
-                    "message": "No Python_OUT MIDI output found. Start loopMIDI and create Python_OUT.",
+                    "message": self.devices.midi_error
+                    or "No Logic melody MIDI output found. Enable Logic Pro Virtual In.",
                 }
             )
             return
 
-        outport.send(mido.Message("note_on", note=pitch, velocity=velocity))
+        if not self._send_note(port_name, "note_on", pitch, velocity):
+            return
         self._threadsafe_broadcast(
             {
                 "type": "visual_note",
@@ -341,7 +483,8 @@ class LiveStudioController:
 
         def note_off() -> None:
             try:
-                outport.send(mido.Message("note_off", note=pitch, velocity=0))
+                if not self._send_note(port_name, "note_off", pitch, 0):
+                    return
                 self._threadsafe_broadcast(
                     {
                         "type": "visual_note",
@@ -359,12 +502,19 @@ class LiveStudioController:
 
     def build_live_command(self, input_port: str) -> list[str]:
         cfg = self.config
+        # Live Studio uses AMT as the primary generator and plays each accepted
+        # event immediately. Motif logic is only an empty-output rescue or a
+        # bounded tail completion after AMT has already established the reply.
+        cfg.backend = LIVE_BACKEND
+        cfg.response_strategy = LIVE_RESPONSE_STRATEGY
         cmd = [
             sys.executable,
             "-u",
             str(LIVE_SCRIPT),
             "--backend",
             cfg.backend,
+            "--response-strategy",
+            cfg.response_strategy,
             "--model-id",
             cfg.model_id,
             "--aria-model-id",
@@ -374,11 +524,17 @@ class LiveStudioController:
             input_port,
             "--output-port",
             cfg.output_port,
+            "--melody-output-port",
+            cfg.melody_output_port,
             "--startup-test-note",
             "--response-seconds",
             str(cfg.response_seconds),
             "--max-events",
             str(cfg.max_events),
+            "--amt-generation-budget",
+            str(cfg.amt_generation_budget),
+            "--partial-fallback-max-share",
+            str(cfg.partial_fallback_max_share),
             "--top-p",
             str(cfg.top_p),
             "--temperature",
@@ -388,7 +544,6 @@ class LiveStudioController:
             "--max-underrun-seconds",
             str(cfg.max_underrun_seconds),
             "--musical-control",
-            "--no-speculative-preload",
             "--fallback-on-empty",
             "--no-duration-match",
             "--live-stop-on-target-notes",
@@ -404,14 +559,23 @@ class LiveStudioController:
             "1.0",
             "--response-note-ratio",
             "1.0",
-            "--min-cutoff",
-            str(cfg.min_cutoff),
+            "--live-style",
+            "pentatonic",
             "--chord-cluster-window",
             str(cfg.chord_cluster_window),
             "--endpoint-confirm-delay",
             str(cfg.endpoint_confirm_delay),
+            "--control-file",
+            str(LIVE_CONTROL_PATH),
         ]
-        if needs_piano_host(cfg.output_port):
+        if cfg.min_cutoff is not None:
+            cmd.extend(["--min-cutoff", str(cfg.min_cutoff)])
+        if cfg.max_cutoff is not None:
+            cmd.extend(["--max-cutoff", str(cfg.max_cutoff)])
+        # The human Call and the AI response share Logic's melody track. Keep
+        # monitoring enabled on macOS too so changing that Logic instrument
+        # changes both what the performer plays and what the loop replays.
+        if cfg.melody_output_port:
             cmd.append("--monitor-input")
         return cmd
 
@@ -423,6 +587,7 @@ class LiveStudioController:
             return
 
         self.refresh_devices()
+        self.panic_all_outputs()
         input_port = requested_input or self.devices.selected_input
         if input_port is None:
             self.session.last_error = "No MIDI input found. Create Python_IN or connect a keyboard."
@@ -439,13 +604,18 @@ class LiveStudioController:
 
         piano_status = self.piano_host.status()
         resolved_output = choose_audio_output(self.devices.outputs, piano_status.available)
-        if resolved_output is None:
+        resolved_melody_output = resolve_port(
+            self.config.melody_output_port,
+            self.devices.outputs,
+        ) or resolved_output
+        if resolved_output is None or resolved_melody_output is None:
             self.session.last_error = "No MIDI output found. Start loopMIDI or enable Microsoft GS Wavetable Synth."
             await self.broadcast_session()
             await self.manager.broadcast({"type": "error", "message": self.session.last_error})
             return
 
         self.config.output_port = resolved_output
+        self.config.melody_output_port = resolved_melody_output
         if needs_piano_host(resolved_output):
             piano_status = self.piano_host.launch()
         await self.broadcast_piano_host()
@@ -453,10 +623,22 @@ class LiveStudioController:
             await self.manager.broadcast({"type": "error", "message": piano_status.message})
 
         cmd = self.build_live_command(resolved_input)
+        LIVE_CONTROL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        LIVE_CONTROL_PATH.write_text("", encoding="utf-8")
+        self.rhythm = RhythmState()
+        self.loop_bank = LoopBankState()
         env = os.environ.copy()
         deps = str(PROJECT_DEPS)
         if PROJECT_DEPS.exists():
             env["PYTHONPATH"] = deps + os.pathsep + env.get("PYTHONPATH", "")
+
+        platform_process_options: dict[str, Any]
+        if os.name == "nt":
+            platform_process_options = {
+                "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP,
+            }
+        else:
+            platform_process_options = {"start_new_session": True}
 
         self.process = subprocess.Popen(
             cmd,
@@ -467,8 +649,8 @@ class LiveStudioController:
             encoding="utf-8",
             errors="replace",
             bufsize=1,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
             env=env,
+            **platform_process_options,
         )
         self.session = SessionState(
             running=True,
@@ -491,18 +673,24 @@ class LiveStudioController:
         threading.Thread(target=self._read_process_output, daemon=True).start()
 
     async def stop_session(self) -> None:
-        if self.process is not None and self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=4)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
+        process = self.process
         self.process = None
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=4)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        self.panic_all_outputs()
         self.session.running = False
         self.session.pid = None
         self.session.status = "stopped"
         self.session.model_status = "not loaded"
+        self.rhythm = RhythmState()
+        self.loop_bank = LoopBankState()
         await self.broadcast_session()
+        await self.broadcast_rhythm()
+        await self.broadcast_loop_bank()
 
     def _read_process_output(self) -> None:
         assert self.process is not None and self.process.stdout is not None
@@ -532,6 +720,67 @@ class LiveStudioController:
         self._threadsafe_broadcast({"type": "session_status", **asdict(self.session)})
 
     def _parse_live_log(self, line: str) -> None:
+        playback_note = re.search(
+            r"\[(ai|drum|loop)_out\]\s+(note_on|note_off)\s+pitch=\s*(\d+)\s+velocity=\s*(\d+)",
+            line,
+        )
+        if playback_note:
+            bus, event, pitch, velocity = playback_note.groups()
+            self._threadsafe_broadcast(
+                {
+                    "type": "playback_note",
+                    "bus": bus,
+                    "event": event,
+                    "pitch": int(pitch),
+                    "velocity": int(velocity),
+                    "time": time.time(),
+                }
+            )
+            return
+
+        if line.startswith("[rhythm] "):
+            try:
+                payload = json.loads(line[len("[rhythm] "):])
+                pattern = payload.get("pattern", [])
+                self.rhythm = RhythmState(
+                    state=str(payload.get("state", "idle")),
+                    tap_count=int(payload.get("tap_count", 0)),
+                    bpm=float(payload.get("bpm", 100.0)),
+                    confidence=float(payload.get("confidence", 0.0)),
+                    bars=max(1, int(payload.get("bars", 1))),
+                    steps_per_bar=max(1, int(payload.get("steps_per_bar", 16))),
+                    pattern=[int(step) for step in pattern] if isinstance(pattern, list) else [],
+                    loop_seconds=float(payload.get("loop_seconds", 0.0)),
+                    learning=bool(payload.get("learning", False)),
+                    playing=bool(payload.get("playing", False)),
+                    replacing=bool(payload.get("replacing", False)),
+                    stopping=bool(payload.get("stopping", False)),
+                    saved_slots=[str(slot) for slot in payload.get("saved_slots", [])],
+                    current_slot=payload.get("current_slot"),
+                    queued_slot=payload.get("queued_slot"),
+                )
+                self._threadsafe_broadcast(
+                    {"type": "rhythm_status", **asdict(self.rhythm)}
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+            return
+        if line.startswith("[loop] "):
+            try:
+                payload = json.loads(line[len("[loop] "):])
+                slots = [LoopSlotState(**slot) for slot in payload.get("slots", [])]
+                if len(slots) == 4:
+                    self.loop_bank = LoopBankState(
+                        mode=str(payload.get("mode", "response")),
+                        latest_ready=bool(payload.get("latest_ready", False)),
+                        slots=slots,
+                    )
+                    self._threadsafe_broadcast(
+                        {"type": "loop_bank_status", **asdict(self.loop_bank)}
+                    )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+            return
         note_match = re.search(r"\[note_on\]\s+pitch=\s*(\d+)\s+velocity=\s*(\d+).*cutoff=([0-9.]+)s", line)
         if note_match:
             pitch, velocity, cutoff = note_match.groups()
@@ -588,9 +837,24 @@ class LiveStudioController:
             self.session.model_status = "loading"
             self._threadsafe_broadcast({"type": "session_status", **asdict(self.session)})
 
+        model_ready = False
         if "device=cuda" in line.lower() or "cuda" in line.lower():
             self.session.model_status = "cuda ready"
+            model_ready = True
+        elif "device=mps" in line.lower():
+            self.session.model_status = "mps ready"
+            model_ready = True
+        elif "[startup]" in line and "device=cpu" in line.lower():
+            self.session.model_status = "cpu ready"
+            model_ready = True
+
+        if model_ready:
             self._threadsafe_broadcast({"type": "session_status", **asdict(self.session)})
+
+        if line.startswith("[listening]"):
+            self.session.status = "listening"
+            self._threadsafe_broadcast({"type": "session_status", **asdict(self.session)})
+            return
 
         if "endpoint -> generating" in line:
             self.session.status = "generating"
@@ -654,6 +918,10 @@ class LiveStudioController:
             return
 
         if "[buffering]" in line:
+            if "total_response_cycle=" in line:
+                self.session.status = "listening"
+                self._threadsafe_broadcast({"type": "session_status", **asdict(self.session)})
+                return
             self.session.status = "buffering"
             self._threadsafe_broadcast({"type": "session_status", **asdict(self.session)})
             return
@@ -713,12 +981,44 @@ class LiveStudioController:
     async def handle_payload(self, payload: dict[str, Any]) -> None:
         kind = payload.get("type")
         if kind == "refresh_devices":
-            self.refresh_devices()
+            self.refresh_devices(force=True)
             await self.broadcast_devices()
         elif kind == "start_session":
             await self.start_session(payload.get("input_port"))
         elif kind == "stop_session":
             await self.stop_session()
+        elif kind == "panic_all":
+            if self.process is not None and self.process.poll() is None:
+                self.send_live_control(kind)
+            self.panic_all_outputs()
+        elif kind in {
+            "rhythm_learn_start",
+            "rhythm_learn_finish",
+            "rhythm_stop",
+            "rhythm_stop_now",
+            "rhythm_variation",
+            "drum_record_start",
+            "drum_record_finish",
+            "drum_stop",
+            "drum_stop_now",
+        } or (
+            isinstance(kind, str)
+            and (
+                kind.startswith("rhythm_save_")
+                or kind.startswith("rhythm_load_")
+                or kind.startswith("loop_save_")
+                or kind.startswith("loop_toggle_")
+                or kind.startswith("loop_stop_")
+                or kind in {"loop_set_mode_response", "loop_set_mode_call_response"}
+            )
+        ):
+            self.send_live_control(kind)
+        elif kind == "rhythm_tap":
+            self.send_live_control(
+                kind,
+                velocity=max(1, min(127, int(payload.get("velocity", 96)))),
+                timestamp=time.monotonic(),
+            )
         elif kind == "test_output":
             self.piano_host.launch()
             await self.broadcast_piano_host()
@@ -733,7 +1033,21 @@ class LiveStudioController:
             params = payload.get("params", {})
             for key, value in params.items():
                 if hasattr(self.config, key):
-                    if key == "backend" and value not in {"amt", "aria"}:
+                    if key == "backend" and value != LIVE_BACKEND:
+                        await self.manager.broadcast(
+                            {
+                                "type": "error",
+                                "message": "现场版本固定使用流式 AMT 主生成器，不能切换生成后端。",
+                            }
+                        )
+                        continue
+                    if key == "response_strategy" and value != LIVE_RESPONSE_STRATEGY:
+                        await self.manager.broadcast(
+                            {
+                                "type": "error",
+                                "message": "Motif 只用于空输出或有限尾部补齐，不能替代 AMT 主回应。",
+                            }
+                        )
                         continue
                     setattr(self.config, key, value)
             await self.manager.broadcast({"type": "config", **asdict(self.config)})
@@ -750,7 +1064,7 @@ if STATIC_DIR.exists():
 @app.on_event("startup")
 async def on_startup() -> None:
     controller.attach_loop(asyncio.get_running_loop())
-    controller.refresh_devices()
+    controller.refresh_devices(force=True)
     asyncio.create_task(controller.poll_devices_forever())
 
 
@@ -768,6 +1082,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     await controller.broadcast_devices()
     await controller.broadcast_session()
     await controller.broadcast_piano_host()
+    await controller.broadcast_rhythm()
+    await controller.broadcast_loop_bank()
     await controller.manager.broadcast({"type": "config", **asdict(controller.config)})
     try:
         while True:

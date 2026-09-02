@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MFP Live Studio</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=demo-11">
 </head>
 <body>
     <div class="studio-shell">
@@ -16,21 +16,80 @@
                     <span class="dot green"></span>
                 </div>
                 <div>
-                    <h1>MFP Studio</h1>
-                    <p>Call / Response</p>
+                    <h1>MFP</h1>
+                    <p>Musical Call / Response</p>
                 </div>
             </header>
 
             <section class="status-stack" aria-label="System status">
-                <div class="status-pill warning" id="connection-status">Connecting</div>
-                <div class="status-pill idle" id="engine-status">Engine idle</div>
-                <div class="status-pill idle" id="piano-host-status">Piano host ready</div>
-                <div class="status-pill idle" id="web-midi-status">Browser MIDI scanning</div>
+                <div class="status-pill warning" id="connection-status">正在连接控制服务</div>
+                <div class="status-pill idle" id="engine-status">AI 尚未启动</div>
+                <div class="status-pill tech-status connected" id="piano-host-status">Logic 唯一音频输出</div>
+                <div class="status-pill tech-status connected" id="web-midi-status">后台独占 MIDI 输入</div>
+                <div class="status-pill tech-status warning" id="test-mode-status">电脑测试模式</div>
+                <div class="status-pill idle" id="rhythm-status">节奏待命</div>
+                <div class="status-pill idle" id="loop-status">回应记忆为空</div>
             </section>
 
-            <section class="panel-block">
+            <section class="panel-block sound-panel" aria-label="Logic sound routing">
                 <div class="block-title">
-                    <span>MIDI Input</span>
+                    <span>Logic 音色槽</span>
+                    <output>双轨并行</output>
+                </div>
+                <div class="sound-route-list">
+                    <div class="sound-route melody">
+                        <span>旋律 / 输入 / AI</span>
+                        <strong>MFP MELODY</strong>
+                        <small>Logic Pro Virtual In · Ch 1</small>
+                    </div>
+                    <div class="sound-route drums">
+                        <span>节奏 / 鼓组</span>
+                        <strong>MFP DRUMS</strong>
+                        <small>Python_OUT · Ch 10</small>
+                    </div>
+                </div>
+            </section>
+
+            <section class="panel-block groove-panel" aria-label="Rhythm guide controls">
+                <div class="block-title">
+                    <span>节奏指导</span>
+                    <output id="rhythm-state-label">待命</output>
+                </div>
+                <p id="rhythm-detail" class="device-note">启动引擎后，示范你想要的节奏。系统会识别速度和重音，并持续输出鼓组 MIDI。</p>
+                <div class="rhythm-readout">
+                    <div class="rhythm-meter">
+                        <strong id="rhythm-bpm">--</strong>
+                        <span>BPM</span>
+                    </div>
+                    <div class="rhythm-meta">
+                        <span id="rhythm-meter-label">4/4 · 1 小节</span>
+                        <span id="rhythm-confidence">等待示范</span>
+                    </div>
+                </div>
+                <div id="rhythm-pattern" class="rhythm-pattern" aria-label="识别出的十六分音符节奏"></div>
+                <button id="rhythm-tap-btn" class="rhythm-tap" type="button">
+                    <strong>TAP</strong>
+                    <span>空格键 / MiniLab Pad</span>
+                </button>
+                <div class="rhythm-controls">
+                    <button id="rhythm-learn-btn" class="rhythm-btn learn">学习新节奏</button>
+                    <button id="rhythm-finish-btn" class="rhythm-btn finish">完成识别</button>
+                    <button id="rhythm-variation-btn" class="rhythm-btn variation">生成变奏</button>
+                    <button id="rhythm-stop-btn" class="rhythm-btn stop">下一小节停止</button>
+                    <button id="rhythm-stop-now-btn" class="rhythm-btn panic">立即停止</button>
+                </div>
+                <div class="rhythm-bank-title">节奏记忆</div>
+                <div id="rhythm-bank" class="rhythm-bank">
+                    <article class="rhythm-slot" data-slot="A"><strong>A</strong><span>空</span><button class="rhythm-save" data-slot="A">保存</button><button class="rhythm-load" data-slot="A">调用</button></article>
+                    <article class="rhythm-slot" data-slot="B"><strong>B</strong><span>空</span><button class="rhythm-save" data-slot="B">保存</button><button class="rhythm-load" data-slot="B">调用</button></article>
+                    <article class="rhythm-slot" data-slot="C"><strong>C</strong><span>空</span><button class="rhythm-save" data-slot="C">保存</button><button class="rhythm-load" data-slot="C">调用</button></article>
+                    <article class="rhythm-slot" data-slot="D"><strong>D</strong><span>空</span><button class="rhythm-save" data-slot="D">保存</button><button class="rhythm-load" data-slot="D">调用</button></article>
+                </div>
+            </section>
+
+            <section class="panel-block input-panel">
+                <div class="block-title">
+                    <span>MIDI 输入</span>
                     <button id="refresh-devices" class="icon-btn" title="Refresh MIDI devices" aria-label="Refresh MIDI devices">R</button>
                 </div>
                 <select id="midi-input" class="studio-select"></select>
@@ -47,54 +106,75 @@
                 </div>
             </section>
 
-            <section class="panel-block">
+            <section class="panel-block feel-panel">
                 <div class="block-title">
-                    <span>Response Feel</span>
-                    <output id="temp-display">0.9</output>
+                    <span>回应变化</span>
+                    <output id="temp-display">0.75</output>
                 </div>
-                <input id="temperature" type="range" min="0.5" max="1.3" step="0.05" value="0.9">
+                <input id="temperature" type="range" min="0.5" max="1.0" step="0.05" value="0.75">
             </section>
 
-            <section class="panel-block">
+            <section class="panel-block loop-panel" aria-label="AI response loop bank">
                 <div class="block-title">
-                    <span>Model Engine</span>
-                    <output id="backend-display">AMT</output>
+                    <span>回应记忆</span>
+                    <select id="loop-save-mode" class="compact-select" aria-label="保存内容">
+                        <option value="response">仅 AI 回应</option>
+                        <option value="call_response">你的句子 + AI</option>
+                    </select>
                 </div>
-                <select id="backend-select" class="studio-select">
-                    <option value="amt_small">AMT Small - music-small-800k</option>
-                    <option value="amt_medium">AMT Medium - music-medium-800k</option>
-                    <option value="aria">ARIA - local aria-medium-gen</option>
+                <p id="loop-detail" class="device-note">每次 AI 回应结束后，选择一个位置保存。播放后会循环发送到 Logic，并使用旋律轨当前音色。</p>
+                <div id="loop-grid" class="loop-grid">
+                    <article class="loop-slot" data-slot="A"><strong>A</strong><span>空</span><button class="loop-save" data-slot="A">保存</button><button class="loop-toggle" data-slot="A">播放</button></article>
+                    <article class="loop-slot" data-slot="B"><strong>B</strong><span>空</span><button class="loop-save" data-slot="B">保存</button><button class="loop-toggle" data-slot="B">播放</button></article>
+                    <article class="loop-slot" data-slot="C"><strong>C</strong><span>空</span><button class="loop-save" data-slot="C">保存</button><button class="loop-toggle" data-slot="C">播放</button></article>
+                    <article class="loop-slot" data-slot="D"><strong>D</strong><span>空</span><button class="loop-save" data-slot="D">保存</button><button class="loop-toggle" data-slot="D">播放</button></article>
+                </div>
+                <button id="loop-stop-all-btn" class="loop-stop-all">STOP ALL LOOPS</button>
+            </section>
+
+            <section class="panel-block model-panel">
+                <div class="block-title">
+                    <span>回应算法</span>
+                    <output id="backend-display">现场流式</output>
+                </div>
+                <select id="backend-select" class="studio-select hidden" aria-hidden="true">
+                    <option value="amt_small">AMT Small</option>
                 </select>
-                <div id="model-note" class="device-note">Current: AMT / stanford-crfm/music-small-800k</div>
+                <div class="model-lockup">
+                    <strong id="response-engine-name">Streaming AMT</strong>
+                    <span id="response-engine-subtitle">AMT 主体 + 动态调性 + 有限补齐</span>
+                </div>
+                <div id="model-note" class="device-note">AMT 音符生成后立即进入播放队列；Motif 只在空输出或 AMT 已形成主体后的有限尾部补齐中使用。</div>
             </section>
 
             <section class="transport">
-                <button id="start-btn" class="transport-btn start">Start Engine</button>
-                <button id="stop-btn" class="transport-btn stop hidden">Stop Engine</button>
-                <button id="test-btn" class="transport-btn test">Test Piano</button>
+                <button id="start-btn" class="transport-btn start">启动 AI</button>
+                <button id="stop-btn" class="transport-btn stop hidden">停止 AI</button>
+                <button id="test-btn" class="transport-btn test">测试 Logic 声音</button>
+                <button id="panic-btn" class="transport-btn panic">全部静音</button>
             </section>
         </aside>
 
         <main class="workspace">
             <section class="top-strip">
                 <div class="metric-cell active">
-                    <label>Source</label>
-                    <strong id="selected-source">Virtual keyboard</strong>
+                    <label>输入</label>
+                    <strong id="selected-source">电脑键盘</strong>
                 </div>
                 <div class="metric-cell">
-                    <label>Round</label>
+                    <label>轮次</label>
                     <strong id="round-id">--</strong>
                 </div>
                 <div class="metric-cell">
-                    <label>State</label>
-                    <strong id="round-state">Idle</strong>
+                    <label>AI 状态</label>
+                    <strong id="round-state">待命</strong>
                 </div>
                 <div class="metric-cell">
-                    <label>First Event</label>
+                    <label>回应延迟</label>
                     <strong id="first-event">--</strong>
                 </div>
                 <div class="metric-cell">
-                    <label>Underruns</label>
+                    <label>播放中断</label>
                     <strong id="underruns">0</strong>
                 </div>
             </section>
@@ -102,13 +182,13 @@
             <section class="visual-stage">
                 <div class="stage-header">
                     <div>
-                        <h2>Live MIDI Visualizer</h2>
-                        <p id="stage-subtitle">Human call and AI response share one piano-roll view.</p>
+                        <h2>实时对话</h2>
+                        <p id="stage-subtitle">你的演奏与 AI 回应会显示在同一视图中。</p>
                     </div>
                     <div class="lane-legend">
-                        <span class="human">Human</span>
-                        <span class="ai">AI</span>
-                        <span class="test">Piano</span>
+                        <span class="human">你的演奏</span>
+                        <span class="ai">AI 回应</span>
+                        <span class="test">测试</span>
                     </div>
                 </div>
                 <canvas id="visualizer-canvas"></canvas>
@@ -126,8 +206,8 @@
                         <button id="keyboard-compact" class="dot yellow window-action" type="button" title="Compact keyboard" aria-label="Compact keyboard"></button>
                         <button id="keyboard-expand" class="dot green window-action" type="button" title="Expand keyboard" aria-label="Expand keyboard"></button>
                     </div>
-                    <strong>MUSICAL TYPING - MFP PIANO</strong>
-                    <span id="audio-status" class="logic-ready">CLICK TO START</span>
+                    <strong>MFP TEST KEYS</strong>
+                    <span id="audio-status" class="logic-ready">LOGIC MIDI</span>
                 </div>
                 <div class="keyboard-particle-stage">
                     <div class="keyboard-grid" aria-hidden="true"></div>
@@ -136,10 +216,10 @@
                 <div class="keyboard-toolbar">
                     <div>
                         <h2>Virtual Keyboard</h2>
-                        <p>Computer keys A to ; mirror the piano.</p>
+                        <p>无硬件时使用电脑键盘完成同样测试。</p>
                     </div>
                     <div class="keyboard-detail-strip">
-                        <span>Sound <strong id="sampler-detail">Autumn Piano</strong></span>
+                        <span>Sound <strong id="sampler-detail">MFP MELODY</strong></span>
                         <span>Range <strong id="range-detail">C3 - B5</strong></span>
                         <span>Sustain <strong id="sustain-detail">CC64 Off</strong></span>
                     </div>
@@ -156,6 +236,6 @@
             </section>
         </main>
     </div>
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=demo-11"></script>
 </body>
 </html>

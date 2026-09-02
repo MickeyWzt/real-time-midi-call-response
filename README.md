@@ -84,6 +84,9 @@ Install or download third-party models, datasets, and audio tools separately acc
 
 ## Quick Start
 
+For a Windows collaborator setup, MIDI routing, model-file boundaries, and the
+shared-branch workflow, see [COLLABORATION_WINDOWS.md](COLLABORATION_WINDOWS.md).
+
 Python 3.12 is recommended on Windows.
 
 ```powershell

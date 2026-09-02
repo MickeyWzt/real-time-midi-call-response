@@ -1,0 +1,3 @@
+[submodule ".native_sdk"]
+	path = .native_sdk
+	url = https://github.com/apple/AudioUnitSDK.git

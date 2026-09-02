@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
+import math
 import os
 import queue
 import sys
@@ -26,7 +28,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from statistics import mean
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, Iterator, List, Optional, Tuple
+
+from drum_loop import DrumEvent, is_drum_pad_note
+from loop_bank import LoopEvent, ResponseLoopBank
+from rhythm_guide import RhythmGuideEngine
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,13 +58,39 @@ DEFAULT_MODEL_ID = "stanford-crfm/music-small-800k"
 DEFAULT_ARIA_MODEL_ID = str(ROOT / "model_weights" / "aria-medium-gen")
 DEFAULT_INPUT_PORT = "Python_IN 0"
 DEFAULT_OUTPUT_PORT = "Python_OUT"
+DEFAULT_MELODY_OUTPUT_PORT = "Logic Pro Virtual In"
 TIME_RESOLUTION = 100
 LATENCY_PRESETS = {
-    "fast": (1, 2.00),
+    # Fast live mode starts after one streamed event and keeps filling the
+    # playback queue while the response is heard. A two-second guard buffer
+    # made the turn-based interface feel unresponsive.
+    "fast": (1, 0.35),
     "balanced": (2, 0.80),
     "classic": (3, 2.00),
     "smooth": (4, 2.00),
 }
+
+
+def should_capture_rhythm_pad(
+    message,
+    learning: bool,
+    drum_pad_min: int,
+    drum_pad_max: int,
+    drum_channel: int,
+) -> bool:
+    """Reserve only the MiniLab pad lane for rhythm learning.
+
+    Keyboard notes must never disappear just because a groove is being
+    learned.  The web interface sends taps through the control channel, while
+    hardware rhythm capture uses the dedicated channel-10 pad lane.
+    """
+
+    return learning and is_drum_pad_note(
+        message,
+        drum_pad_min,
+        drum_pad_max,
+        drum_channel,
+    )
 
 
 def default_metrics_path() -> Path:
@@ -99,6 +131,9 @@ class CallProfile:
     tail_repeat_count: int
     tail_repeat_share: float
     tail_start_index: Optional[int]
+    scale_root: int
+    scale_mode: str
+    scale_pitch_classes: Tuple[int, ...]
 
 
 @dataclass(frozen=True)
@@ -467,6 +502,40 @@ def clamp_int(value: int, lower: int, upper: int) -> int:
     return min(max(value, lower), upper)
 
 
+def quantize_onset_to_rhythm_grid(
+    onset_offset: float,
+    bpm: float,
+    strength: float = 0.92,
+) -> float:
+    """Pull a response onset toward the nearest learned 1/16-note grid point."""
+
+    if bpm <= 0:
+        return max(0.0, onset_offset)
+    grid = (60.0 / bpm) / 4.0
+    quantized = round(max(0.0, onset_offset) / grid) * grid
+    amount = clamp_float(strength, 0.0, 1.0)
+    return max(0.0, onset_offset + (quantized - onset_offset) * amount)
+
+
+def should_use_motif_fallback(
+    *,
+    generated_count: int,
+    fallback_on_empty: bool,
+    backend: str,
+    response_strategy: str,
+    stopped: bool,
+) -> bool:
+    """Allow a full motif rescue only when an AMT response is empty."""
+
+    return (
+        generated_count == 0
+        and fallback_on_empty
+        and backend == "amt"
+        and response_strategy in {"controlled_amt", "streaming_amt"}
+        and not stopped
+    )
+
+
 def analyze_call_phrase(notes: List[CapturedNote]) -> CallProfile:
     if not notes:
         return CallProfile(
@@ -483,6 +552,9 @@ def analyze_call_phrase(notes: List[CapturedNote]) -> CallProfile:
             tail_repeat_count=0,
             tail_repeat_share=0.0,
             tail_start_index=None,
+            scale_root=0,
+            scale_mode="major",
+            scale_pitch_classes=(0, 2, 4, 5, 7, 9, 11),
         )
 
     pitches = [note.pitch for note in notes]
@@ -545,6 +617,7 @@ def analyze_call_phrase(notes: List[CapturedNote]) -> CallProfile:
                     idx for idx, pitch in window_items if pitch == window_pitch
                 )
 
+    scale_root, scale_mode, scale_pitch_classes = infer_phrase_scale(notes)
     return CallProfile(
         duration_seconds=duration_seconds,
         note_count=len(notes),
@@ -559,7 +632,84 @@ def analyze_call_phrase(notes: List[CapturedNote]) -> CallProfile:
         tail_repeat_count=tail_repeat_count,
         tail_repeat_share=tail_repeat_share,
         tail_start_index=tail_start_index,
+        scale_root=scale_root,
+        scale_mode=scale_mode,
+        scale_pitch_classes=scale_pitch_classes,
     )
+
+
+MAJOR_INTERVALS = (0, 2, 4, 5, 7, 9, 11)
+MINOR_INTERVALS = (0, 2, 3, 5, 7, 8, 10)
+
+
+def infer_phrase_scale(notes: List[CapturedNote]) -> Tuple[int, str, Tuple[int, ...]]:
+    """Choose the major/minor collection that best explains the played phrase."""
+
+    if not notes:
+        return 0, "major", tuple(MAJOR_INTERVALS)
+    pitch_weights: Counter[int] = Counter()
+    for note in notes:
+        duration = max(0.08, float(note.duration or 0.25))
+        pitch_weights[note.pitch % 12] += 1.0 + min(duration, 1.0) * 0.45
+    first_pc = notes[0].pitch % 12
+    last_pc = notes[-1].pitch % 12
+    best: Tuple[float, int, str, Tuple[int, ...]] | None = None
+    for root in range(12):
+        for mode, intervals in (("major", MAJOR_INTERVALS), ("minor", MINOR_INTERVALS)):
+            pcs = tuple((root + interval) % 12 for interval in intervals)
+            pentatonic_intervals = (0, 2, 4, 7, 9) if mode == "major" else (0, 3, 5, 7, 10)
+            pentatonic_pcs = {(root + interval) % 12 for interval in pentatonic_intervals}
+            score = sum(weight for pc, weight in pitch_weights.items() if pc in pcs)
+            score -= sum(weight * 1.4 for pc, weight in pitch_weights.items() if pc not in pcs)
+            # Relative major/minor and neighbouring modes can explain the same
+            # seven pitch classes. Prefer the tonic whose pentatonic core best
+            # explains the performed motif, and treat the opening note as a
+            # stronger tonal cue than a question-like final note.
+            score += sum(
+                weight * 0.35
+                for pc, weight in pitch_weights.items()
+                if pc in pentatonic_pcs
+            )
+            if last_pc == root:
+                score += 0.4
+            elif last_pc == (root + 7) % 12:
+                score += 0.2
+            if first_pc == root:
+                score += 1.2
+            elif first_pc == (root + 7) % 12:
+                score += 0.2
+            candidate = (score, -root, mode, pcs)
+            if best is None or candidate > best:
+                best = candidate
+    assert best is not None
+    return -best[1], best[2], best[3]
+
+
+def snap_pitch_to_scale(
+    pitch: int,
+    pitch_classes: Tuple[int, ...],
+    lower: int,
+    upper: int,
+    preferred: Optional[int] = None,
+) -> int:
+    candidates = [value for value in range(lower, upper + 1) if value % 12 in pitch_classes]
+    if not candidates:
+        return clamp_int(pitch, lower, upper)
+    reference = pitch if preferred is None else preferred
+    return min(candidates, key=lambda value: (abs(value - pitch), abs(value - reference), value))
+
+
+def estimate_phrase_grid(notes: List[CapturedNote]) -> float:
+    intervals = [
+        later.onset - earlier.onset
+        for earlier, later in zip(notes, notes[1:])
+        if 0.07 <= later.onset - earlier.onset <= 1.5
+    ]
+    if not intervals:
+        return 0.25
+    ordered = sorted(intervals)
+    median = ordered[len(ordered) // 2]
+    return clamp_float(median / 2.0 if median > 0.42 else median, 0.10, 0.38)
 
 
 def clean_prompt_phrase(notes: List[CapturedNote], profile: CallProfile) -> List[CapturedNote]:
@@ -598,7 +748,9 @@ def build_response_plan(
     stop_on_target_notes: bool = False,
 ) -> ResponsePlan:
     max_seconds = max(response_seconds, 0.1)
-    min_seconds = min(2.0, max_seconds)
+    # A one-note or two-note Call should receive a compact answer rather than
+    # being padded to two seconds before it can be played.
+    min_seconds = min(0.85, max_seconds)
     target_seconds = clamp_float(
         profile.duration_seconds * response_length_ratio,
         min_seconds,
@@ -699,7 +851,12 @@ def load_transformer_model(model_id: str, offline: bool, endpoint: Optional[str]
     from huggingface_hub import hf_hub_download
     from transformers import AutoModelForCausalLM
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
     source = model_id
 
     if offline:
@@ -846,6 +1003,58 @@ def build_rescue_response_events(
     return events
 
 
+def partial_fallback_limit(
+    amt_event_count: int,
+    target_event_count: int,
+    max_fallback_share: float,
+) -> int:
+    """Cap partial motif completion so AMT remains the primary response source.
+
+    A non-empty live response may be completed after the AMT streaming window,
+    but motif events never outnumber the AMT events that were actually heard.
+    A zero-event response still uses the existing full fallback path.
+    """
+
+    if amt_event_count <= 0 or target_event_count <= amt_event_count:
+        return 0
+    share_cap = max(0, int(math.floor(target_event_count * clamp_float(max_fallback_share, 0.0, 1.0))))
+    missing = target_event_count - amt_event_count
+    return min(missing, share_cap, amt_event_count)
+
+
+def build_partial_motif_completion(
+    amt_events: List[GeneratedEvent],
+    template_events: List[GeneratedEvent],
+    fill_count: int,
+    grid_ticks: int,
+    controller: Optional[MusicalResponseController],
+) -> List[GeneratedEvent]:
+    """Append a bounded motif tail after already-streamed AMT events."""
+
+    if not amt_events or not template_events or fill_count <= 0:
+        return []
+    last_tick = max(event.tick for event in amt_events)
+    step = max(1, int(grid_ticks))
+    completed: List[GeneratedEvent] = []
+    for index in range(fill_count):
+        source = template_events[(len(amt_events) + index) % len(template_events)]
+        event = GeneratedEvent(
+            tick=last_tick + step * (index + 1),
+            duration_ticks=source.duration_ticks,
+            pitch=source.pitch,
+            instrument=source.instrument,
+            velocity=source.velocity,
+        )
+        if controller is not None:
+            reason = controller.rejection_reason(event)
+            if reason is not None:
+                controller.reject(reason)
+                event = controller.fallback_event(event)
+            event = controller.accept(event)
+        completed.append(event)
+    return completed
+
+
 def response_duration_seconds(
     events: List[GeneratedEvent],
     min_note_duration: float,
@@ -953,6 +1162,138 @@ def shape_response_duration(
     actual_duration = response_duration_seconds(shaped, min_note_duration, max_note_duration)
     stretch_factor = actual_duration / raw_duration if raw_duration > 0 else 1.0
     return shaped, raw_duration, actual_duration, stretch_factor
+
+
+def project_live_event_to_call_scale(
+    event: GeneratedEvent,
+    profile: CallProfile,
+    plan: ResponsePlan,
+    previous_pitch: Optional[int],
+    max_melodic_leap: int = 7,
+) -> GeneratedEvent:
+    """Project one streaming event into the inferred Call-relative pentatonic key."""
+
+    intervals = (0, 3, 5, 7, 10) if profile.scale_mode == "minor" else (0, 2, 4, 7, 9)
+    pitch_classes = {(profile.scale_root + interval) % 12 for interval in intervals}
+    candidates = [
+        pitch
+        for pitch in range(plan.pitch_min, plan.pitch_max + 1)
+        if pitch % 12 in pitch_classes
+    ]
+    if not candidates:
+        return event
+    allowed = candidates
+    if previous_pitch is not None and max_melodic_leap > 0:
+        local = [pitch for pitch in candidates if abs(pitch - previous_pitch) <= max_melodic_leap]
+        if local:
+            allowed = local
+    pitch = min(allowed, key=lambda value: (abs(value - event.pitch), value))
+    if previous_pitch is not None and pitch == previous_pitch and len(allowed) > 1:
+        alternatives = [value for value in allowed if value != previous_pitch]
+        pitch = min(
+            alternatives,
+            key=lambda value: (abs(value - event.pitch), abs(value - previous_pitch)),
+        )
+    return GeneratedEvent(
+        tick=event.tick,
+        duration_ticks=event.duration_ticks,
+        pitch=pitch,
+        instrument=event.instrument,
+        velocity=event.velocity,
+    )
+
+
+def apply_live_pentatonic_style(
+    events: List[GeneratedEvent],
+    profile: CallProfile,
+    plan: ResponsePlan,
+    max_melodic_leap: int = 7,
+) -> List[GeneratedEvent]:
+    """Apply the paper's A5/A6 pentatonic and cadence controls to live output.
+
+    The offline evaluation accepts an explicit style root.  In the live path we
+    derive that root and major/minor mode from the CallProfile so the constraint
+    follows the performer instead of being fixed to C.
+    """
+
+    if not events:
+        return []
+    intervals = (0, 3, 5, 7, 10) if profile.scale_mode == "minor" else (0, 2, 4, 7, 9)
+    pitch_classes = {(profile.scale_root + interval) % 12 for interval in intervals}
+    candidates = [
+        pitch
+        for pitch in range(plan.pitch_min, plan.pitch_max + 1)
+        if pitch % 12 in pitch_classes
+    ]
+    if not candidates:
+        return events
+
+    styled: List[GeneratedEvent] = []
+    previous_pitch: Optional[int] = None
+    for event in sorted(events, key=lambda item: (item.tick, item.pitch)):
+        projected = project_live_event_to_call_scale(
+            event,
+            profile,
+            plan,
+            previous_pitch,
+            max_melodic_leap=max_melodic_leap,
+        )
+        styled.append(projected)
+        previous_pitch = projected.pitch
+
+    cadence_candidates = [pitch for pitch in candidates if pitch % 12 == profile.scale_root]
+    if cadence_candidates:
+        last = styled[-1]
+        previous_to_cadence = styled[-2].pitch if len(styled) > 1 else None
+        local_cadences = [
+            pitch
+            for pitch in cadence_candidates
+            if (
+                previous_to_cadence is None
+                or (
+                    pitch != previous_to_cadence
+                    and abs(pitch - previous_to_cadence) <= max_melodic_leap
+                )
+            )
+        ]
+        if local_cadences:
+            cadence_candidates = local_cadences
+        cadence = min(cadence_candidates, key=lambda value: abs(value - last.pitch))
+        if len(styled) > 1 and styled[-2].pitch == cadence:
+            penultimate = styled[-2]
+            earlier_pitch = styled[-3].pitch if len(styled) > 2 else None
+            approach_candidates = [
+                pitch
+                for pitch in candidates
+                if (
+                    pitch != cadence
+                    and abs(pitch - cadence) <= max_melodic_leap
+                    and (
+                        earlier_pitch is None
+                        or abs(pitch - earlier_pitch) <= max_melodic_leap
+                    )
+                )
+            ]
+            if approach_candidates:
+                approach = min(
+                    approach_candidates,
+                    key=lambda value: abs(value - penultimate.pitch),
+                )
+                styled[-2] = GeneratedEvent(
+                    tick=penultimate.tick,
+                    duration_ticks=penultimate.duration_ticks,
+                    pitch=approach,
+                    instrument=penultimate.instrument,
+                    velocity=penultimate.velocity,
+                )
+        styled[-1] = GeneratedEvent(
+            tick=last.tick,
+            duration_ticks=last.duration_ticks,
+            pitch=cadence,
+            instrument=last.instrument,
+            velocity=last.velocity,
+        )
+    return styled
 
 
 def split_event(token_triplet: List[int]) -> GeneratedEvent:
@@ -1086,7 +1427,7 @@ class StreamingAMTGenerator:
         from anticipation import ops
         from anticipation.sample import future_logits, instr_logits, nucleus, safe_logits
         from anticipation.vocab import DUR_OFFSET, NOTE_OFFSET, TIME_OFFSET
-        from anticipation.config import MAX_TIME
+        from anticipation.config import MAX_DUR, MAX_NOTE, MAX_TIME
 
         history = tokens[-self.max_history_tokens :].copy()
         offset = ops.min_time(history, seconds=False)
@@ -1155,7 +1496,17 @@ class StreamingAMTGenerator:
                     logits = instr_logits(logits, tokens)
                 if self.temperature > 0:
                     logits = logits / self.temperature
-                new_token.append(sample_token(logits, fallback_token(part_idx)))
+                fallback = fallback_token(part_idx)
+                token = sample_token(logits, fallback)
+                valid_ranges = (
+                    (TIME_OFFSET, TIME_OFFSET + MAX_TIME),
+                    (DUR_OFFSET, DUR_OFFSET + MAX_DUR),
+                    (NOTE_OFFSET, NOTE_OFFSET + MAX_NOTE),
+                )
+                low, high = valid_ranges[part_idx]
+                if not low <= token < high:
+                    token = fallback
+                new_token.append(token)
 
         new_token[0] += offset
         return new_token
@@ -1173,6 +1524,7 @@ class StreamingAMTGenerator:
 
         tokens = ops.sort(call_events.copy())
         start_tick = int(round(ops.max_time(tokens) * TIME_RESOLUTION))
+        tokens = ops.pad(tokens, start_tick)
         end_tick = start_tick + int(round(response_seconds * TIME_RESOLUTION))
         current_time = start_tick
         z = [AUTOREGRESS]
@@ -1619,6 +1971,9 @@ class ResponsePlayer:
         pitch_max: int,
         min_note_duration: float,
         max_note_duration: float,
+        rhythm_timing_provider: Optional[Callable[[], Optional[Tuple[float, float]]]] = None,
+        rhythm_quantize_strength: float = 0.92,
+        cancel_event: Optional[threading.Event] = None,
     ) -> None:
         self.outport = outport
         self.events_queue = events_queue
@@ -1631,6 +1986,9 @@ class ResponsePlayer:
         self.pitch_max = pitch_max
         self.min_note_duration = min_note_duration
         self.max_note_duration = max_note_duration
+        self.rhythm_timing_provider = rhythm_timing_provider
+        self.rhythm_quantize_strength = clamp_float(rhythm_quantize_strength, 0.0, 1.0)
+        self.cancel_event = cancel_event
         self.buffer_underruns = 0
         self.initial_buffer_reached_end = False
 
@@ -1642,20 +2000,32 @@ class ResponsePlayer:
         for due_time, pitch, channel in active_notes:
             if due_time <= now:
                 self.outport.send(mido.Message("note_off", note=pitch, velocity=0, channel=channel))
+                print(f"[ai_out] note_off pitch={pitch:3d} velocity=  0", flush=True)
             else:
                 remaining.append((due_time, pitch, channel))
         active_notes[:] = remaining
+
+    def _release_active_notes(self, active_notes: List[Tuple[float, int, int]]) -> None:
+        import mido
+
+        for _, pitch, channel in active_notes:
+            self.outport.send(mido.Message("note_off", note=pitch, velocity=0, channel=channel))
+            print(f"[ai_out] note_off pitch={pitch:3d} velocity=  0", flush=True)
+        active_notes.clear()
 
     def _sleep_until(
         self,
         target_time: float,
         active_notes: List[Tuple[float, int, int]],
-    ) -> None:
+    ) -> bool:
         while True:
             self._send_due_note_offs(active_notes)
+            if self.cancel_event is not None and self.cancel_event.is_set():
+                self._release_active_notes(active_notes)
+                return False
             now = time.monotonic()
             if now >= target_time:
-                return
+                return True
             next_due = min((item[0] for item in active_notes), default=target_time)
             sleep_until = min(target_time, next_due)
             time.sleep(max(0.001, min(0.05, sleep_until - now)))
@@ -1666,6 +2036,8 @@ class ResponsePlayer:
         soft_deadline = time.monotonic() + self.initial_buffer_timeout
         first_event_deadline = time.monotonic() + max(self.initial_buffer_timeout, self.first_event_timeout)
         while len(buffered) < self.initial_buffer_events:
+            if self.cancel_event is not None and self.cancel_event.is_set():
+                break
             now = time.monotonic()
             if buffered and now >= soft_deadline:
                 break
@@ -1674,10 +2046,6 @@ class ResponsePlayer:
                     f"[playback] no first event after {self.first_event_timeout:.1f}s; "
                     "declaring empty response"
                 )
-                break
-            if not buffered and self.producer_done is not None and self.producer_done.is_set():
-                break
-            if buffered and self.producer_done is not None and self.producer_done.is_set():
                 break
             deadline = soft_deadline if buffered else first_event_deadline
             timeout = max(0.01, min(0.10, deadline - now))
@@ -1709,6 +2077,25 @@ class ResponsePlayer:
 
         first_tick = buffered[0].tick
         playback_start = time.monotonic()
+        rhythm_bpm: Optional[float] = None
+        if self.rhythm_timing_provider is not None:
+            timing = self.rhythm_timing_provider()
+            if timing is not None:
+                rhythm_bpm, phase = timing
+                beat_seconds = 60.0 / rhythm_bpm
+                # Stay locked to the learnt groove without holding a finished
+                # AI answer for an entire beat.  Starting on the next 1/16
+                # keeps it musical and caps the added wait at one subdivision.
+                subdivision_seconds = beat_seconds / 4.0
+                steps_elapsed = max(0.0, (playback_start - phase) / subdivision_seconds)
+                playback_start = phase + math.ceil(steps_elapsed) * subdivision_seconds
+                if playback_start - time.monotonic() < 0.015:
+                    playback_start += subdivision_seconds
+                print(
+                    f"[playback] rhythm_sync bpm={rhythm_bpm:.1f} grid=1/16 "
+                    f"wait={max(0.0, playback_start - time.monotonic()):.3f}s",
+                    flush=True,
+                )
         initial_buffer_count = len(buffered)
         pending = buffered
         active_notes: List[Tuple[float, int, int]] = []
@@ -1718,6 +2105,10 @@ class ResponsePlayer:
 
         while True:
             self._send_due_note_offs(active_notes)
+            if self.cancel_event is not None and self.cancel_event.is_set():
+                self._release_active_notes(active_notes)
+                print("[playback] cancelled by panic", flush=True)
+                break
             if pending:
                 event = pending.pop(0)
             else:
@@ -1745,13 +2136,21 @@ class ResponsePlayer:
                 event = item
 
             onset_offset = max(0.0, (event.tick - first_tick) / TIME_RESOLUTION)
+            if rhythm_bpm is not None:
+                onset_offset = quantize_onset_to_rhythm_grid(
+                    onset_offset,
+                    rhythm_bpm,
+                    self.rhythm_quantize_strength,
+                )
             target_time = playback_start + onset_offset
-            self._sleep_until(target_time, active_notes)
+            if not self._sleep_until(target_time, active_notes):
+                break
 
             velocity = clamp_int(getattr(event, "velocity", 92), 1, 127)
             channel = 0 if event.instrument != 128 else 9
             pitch = min(max(event.pitch, self.pitch_min), self.pitch_max)
             self.outport.send(mido.Message("note_on", note=pitch, velocity=velocity, channel=channel))
+            print(f"[ai_out] note_on pitch={pitch:3d} velocity={velocity:3d}", flush=True)
             duration = min(
                 max(self.min_note_duration, event.duration_ticks / TIME_RESOLUTION),
                 self.max_note_duration,
@@ -1760,7 +2159,8 @@ class ResponsePlayer:
             played_events += 1
 
         while active_notes:
-            self._sleep_until(min(item[0] for item in active_notes), active_notes)
+            if not self._sleep_until(min(item[0] for item in active_notes), active_notes):
+                break
         playback_end = time.monotonic()
         print(f"[playback] done; buffer_underruns={self.buffer_underruns}")
         return PlaybackStats(
@@ -1779,13 +2179,32 @@ class LiveCallResponseApp:
         self.recorder = PhraseRecorder(default_duration=args.default_note_duration)
         self.stop_event = threading.Event()
         self.busy = threading.Event()
+        # A performer must be able to keep playing while the previous AI
+        # answer is sounding.  Keep one complete, most-recent phrase ready
+        # instead of dropping it just because a response thread is busy.
+        self.pending_lock = threading.Lock()
+        self.pending_response: Optional[Tuple[List[CapturedNote], EndpointDecision]] = None
+        self.playback_cancel_event = threading.Event()
         self.output_lock = threading.Lock()
+        self._melody_output = None
         self.speculative_lock = threading.Lock()
         self.speculative_preload: Optional[SpeculativePreloadState] = None
         self.speculative_preload_id = 0
         self.speculative_cancel_count = 0
+        self.rhythm_guide = RhythmGuideEngine(drum_channel=args.drum_channel)
+        self.loop_bank = ResponseLoopBank()
+        self.loop_save_mode = "response"
+        self._last_response_lock = threading.Lock()
+        self._last_response: List[GeneratedEvent] = []
+        self._last_call: List[CapturedNote] = []
+        self._monitor_active_notes: set[tuple[int, int]] = set()
+        self._control_offset = 0
+        self._last_rhythm_status: Optional[Tuple[object, ...]] = None
+        self._last_loop_status: Optional[Tuple[object, ...]] = None
         self.model = None
-        if args.backend == "aria":
+        if args.response_strategy == "motif":
+            self.generator = None
+        elif args.backend == "aria":
             self.generator = AriaLiveGenerator(
                 model_id=args.aria_model_id,
                 offline=args.offline,
@@ -1810,7 +2229,7 @@ class LiveCallResponseApp:
                 top_p=args.top_p,
                 temperature=args.temperature,
             )
-        self.device = model_device_name(self.model)
+        self.device = "rule-based" if self.model is None else model_device_name(self.model)
         self.metrics = MetricsRecorder(
             path=None if args.no_metrics else Path(args.metrics_path),
             enabled=not args.no_metrics,
@@ -1830,9 +2249,10 @@ class LiveCallResponseApp:
             on_endpoint=self.on_endpoint,
         )
         print(
-            "[startup] backend={} model_id={} device={} top_p={} temperature={} "
+            "[startup] backend={} strategy={} model_id={} device={} top_p={} temperature={} "
             "response_seconds={} latency_mode={} initial_buffer={}/{}s".format(
                 args.backend,
+                args.response_strategy,
                 args.aria_model_id if args.backend == "aria" else args.model_id,
                 self.device,
                 args.top_p,
@@ -1877,11 +2297,357 @@ class LiveCallResponseApp:
         )
         if args.speculative_preload:
             print("[startup] speculative_preload=on; candidate endpoints will pre-generate AMT responses")
+        print(
+            "[startup] drum_pad_range={}..{} drum_channel={} control_file={}".format(
+                args.drum_pad_min,
+                args.drum_pad_max,
+                args.drum_channel + 1,
+                args.control_file or "off",
+            )
+        )
+
+    def _rhythm_status(self) -> Tuple[object, ...]:
+        status = self.rhythm_guide.status()
+        return (
+            status.state,
+            status.tap_count,
+            status.bpm,
+            status.confidence,
+            status.bars,
+            status.pattern,
+            round(status.loop_seconds, 3),
+            status.learning,
+            status.playing,
+            status.replacing,
+            status.stopping,
+            status.saved_slots,
+            status.current_slot,
+            status.queued_slot,
+        )
+
+    def _report_rhythm_status(self, force: bool = False) -> None:
+        current = self._rhythm_status()
+        if not force and current == self._last_rhythm_status:
+            return
+        self._last_rhythm_status = current
+        status = self.rhythm_guide.status()
+        print(
+            "[rhythm] "
+            + json.dumps(
+                {
+                    "state": status.state,
+                    "tap_count": status.tap_count,
+                    "bpm": status.bpm,
+                    "confidence": status.confidence,
+                    "bars": status.bars,
+                    "steps_per_bar": status.steps_per_bar,
+                    "pattern": list(status.pattern),
+                    "learning": status.learning,
+                    "playing": status.playing,
+                    "replacing": status.replacing,
+                    "stopping": status.stopping,
+                    "loop_seconds": status.loop_seconds,
+                    "saved_slots": list(status.saved_slots),
+                    "current_slot": status.current_slot,
+                    "queued_slot": status.queued_slot,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+
+    def _loop_status(self) -> Tuple[object, ...]:
+        return (
+            self.loop_save_mode,
+            bool(self._last_response),
+            tuple(
+                (
+                    slot.name,
+                    slot.has_content,
+                    slot.event_count,
+                    round(slot.loop_seconds, 3),
+                    slot.playing,
+                    slot.stopping,
+                )
+                for slot in self.loop_bank.status()
+            ),
+        )
+
+    def _report_loop_status(self, force: bool = False) -> None:
+        current = self._loop_status()
+        if not force and current == self._last_loop_status:
+            return
+        self._last_loop_status = current
+        slots = [
+            {
+                "name": slot.name,
+                "has_content": slot.has_content,
+                "event_count": slot.event_count,
+                "loop_seconds": round(slot.loop_seconds, 3),
+                "playing": slot.playing,
+                "stopping": slot.stopping,
+            }
+            for slot in self.loop_bank.status()
+        ]
+        print(
+            "[loop] "
+            + json.dumps(
+                {
+                    "mode": self.loop_save_mode,
+                    "latest_ready": bool(self._last_response),
+                    "slots": slots,
+                },
+                ensure_ascii=False,
+            )
+        )
+
+    def _response_loop_events(self, events: List[GeneratedEvent]) -> Tuple[List[LoopEvent], float]:
+        melodic = [event for event in events if event.instrument != 128]
+        if not melodic:
+            return [], 0.0
+        first_tick = min(event.tick for event in melodic)
+        loop_events: List[LoopEvent] = []
+        end_time = 0.0
+        for event in melodic:
+            onset = max(0.0, (event.tick - first_tick) / TIME_RESOLUTION)
+            duration = min(
+                max(self.args.min_note_duration, event.duration_ticks / TIME_RESOLUTION),
+                self.args.max_note_duration,
+            )
+            pitch = min(max(event.pitch, self.args.pitch_min), self.args.pitch_max)
+            velocity = clamp_int(getattr(event, "velocity", 92), 1, 127)
+            loop_events.extend(
+                [
+                    LoopEvent(onset, "note_on", pitch, velocity, 0),
+                    LoopEvent(onset + duration, "note_off", pitch, 0, 0),
+                ]
+            )
+            end_time = max(end_time, onset + duration)
+        return loop_events, max(0.5, end_time + 0.12)
+
+    def _call_response_loop_events(
+        self,
+        phrase: List[CapturedNote],
+        response: List[GeneratedEvent],
+    ) -> Tuple[List[LoopEvent], float]:
+        response_events, response_seconds = self._response_loop_events(response)
+        if not phrase:
+            return response_events, response_seconds
+        first_onset = min(note.onset for note in phrase)
+        call_events: List[LoopEvent] = []
+        call_end = 0.0
+        for note in phrase:
+            onset = max(0.0, note.onset - first_onset)
+            duration = note.duration if note.duration is not None else self.args.default_note_duration
+            duration = min(max(self.args.min_note_duration, duration), self.args.max_note_duration)
+            pitch = min(max(note.pitch, self.args.pitch_min), self.args.pitch_max)
+            call_events.extend(
+                [
+                    LoopEvent(onset, "note_on", pitch, clamp_int(note.velocity, 1, 127), 0),
+                    LoopEvent(onset + duration, "note_off", pitch, 0, 0),
+                ]
+            )
+            call_end = max(call_end, onset + duration)
+        response_start = call_end + 0.22
+        shifted = [
+            LoopEvent(event.offset + response_start, event.kind, event.note, event.velocity, 0)
+            for event in response_events
+        ]
+        return call_events + shifted, max(0.5, response_start + response_seconds)
+
+    def _save_last_response_to_slot(self, name: str) -> bool:
+        with self._last_response_lock:
+            response = list(self._last_response)
+            phrase = list(self._last_call)
+        if self.loop_save_mode == "call_response":
+            events, seconds = self._call_response_loop_events(phrase, response)
+        else:
+            events, seconds = self._response_loop_events(response)
+        return self.loop_bank.save(name, events, seconds)
+
+    def _read_live_controls(self) -> List[dict]:
+        path_text = self.args.control_file
+        if not path_text:
+            return []
+        path = Path(path_text)
+        if not path.exists():
+            return []
+        try:
+            size = path.stat().st_size
+            if size < self._control_offset:
+                self._control_offset = 0
+            with path.open("r", encoding="utf-8") as handle:
+                handle.seek(self._control_offset)
+                lines = handle.readlines()
+                self._control_offset = handle.tell()
+        except OSError as exc:
+            print(f"[drum] control read failed: {exc}")
+            return []
+
+        controls: List[dict] = []
+        for line in lines:
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                print("[drum] ignored an invalid live control message")
+                continue
+            if isinstance(payload, dict):
+                controls.append(payload)
+        return controls
+
+    def _send_drum_events(self, outport, events: Iterable[DrumEvent]) -> None:
+        import mido
+
+        if outport is None:
+            return
+        with self.output_lock:
+            for event in events:
+                outport.send(
+                    mido.Message(
+                        event.kind,
+                        note=event.note,
+                        velocity=event.velocity,
+                        channel=self.args.drum_channel,
+                    )
+                )
+                print(
+                    f"[drum_out] {event.kind} pitch={event.note:3d} velocity={event.velocity:3d}",
+                    flush=True,
+                )
+
+    def _send_loop_events(self, outport, events: Iterable[LoopEvent]) -> None:
+        import mido
+
+        with self.output_lock:
+            for event in events:
+                outport.send(
+                    mido.Message(
+                        event.kind,
+                        note=event.note,
+                        velocity=event.velocity,
+                        channel=event.channel,
+                    )
+                )
+                print(
+                    f"[loop_out] {event.kind} pitch={event.note:3d} velocity={event.velocity:3d}",
+                    flush=True,
+                )
+
+    def _forward_drum_message(self, outport, msg) -> None:
+        import mido
+
+        with self.output_lock:
+            outport.send(
+                msg.copy(
+                    time=0,
+                    channel=self.args.drum_channel,
+                    velocity=0 if msg.type == "note_off" else int(msg.velocity),
+                )
+            )
+
+    def _panic_outputs(self, melody_output, drum_output) -> None:
+        import mido
+
+        ports = [melody_output]
+        if drum_output is not melody_output:
+            ports.append(drum_output)
+        with self.output_lock:
+            for outport in ports:
+                if outport is None:
+                    continue
+                for channel in range(16):
+                    outport.send(mido.Message("control_change", channel=channel, control=64, value=0))
+                    outport.send(mido.Message("control_change", channel=channel, control=123, value=0))
+                    outport.send(mido.Message("control_change", channel=channel, control=120, value=0))
+        self._monitor_active_notes.clear()
+        print("[panic] sustain_off all_notes_off all_sound_off", flush=True)
+
+    def _apply_drum_controls(self, now: float, outport) -> None:
+        for control in self._read_live_controls():
+            action = control.get("action")
+            if action in {"rhythm_learn_start", "drum_record_start"}:
+                self.rhythm_guide.start_learning(now)
+                self._report_rhythm_status(force=True)
+            elif action in {"rhythm_learn_finish", "drum_record_finish"}:
+                if not self.rhythm_guide.finish_learning(now):
+                    print("[rhythm] at least three taps are required before finishing")
+                self._report_rhythm_status(force=True)
+            elif action in {"rhythm_stop", "drum_stop"}:
+                self.rhythm_guide.request_stop()
+                self._report_rhythm_status(force=True)
+            elif action in {"rhythm_stop_now", "drum_stop_now"}:
+                self._send_drum_events(outport, self.rhythm_guide.emergency_stop())
+                self._report_rhythm_status(force=True)
+            elif action == "rhythm_tap":
+                tap_time = float(control.get("timestamp", now))
+                velocity = int(control.get("velocity", 96))
+                if self.rhythm_guide.capture_tap(velocity, tap_time):
+                    print(f"[rhythm_tap] velocity={velocity:3d}", flush=True)
+                    self._report_rhythm_status(force=True)
+            elif isinstance(action, str) and action.startswith("rhythm_save_"):
+                slot = action.rsplit("_", 1)[-1].upper()
+                try:
+                    if not self.rhythm_guide.save_slot(slot):
+                        print("[rhythm] no active rhythm available to save")
+                except ValueError:
+                    print(f"[rhythm] ignored unknown save slot: {slot}")
+                self._report_rhythm_status(force=True)
+            elif isinstance(action, str) and action.startswith("rhythm_load_"):
+                slot = action.rsplit("_", 1)[-1].upper()
+                try:
+                    if not self.rhythm_guide.load_slot(slot, now):
+                        print(f"[rhythm] slot {slot} is empty")
+                except ValueError:
+                    print(f"[rhythm] ignored unknown load slot: {slot}")
+                self._report_rhythm_status(force=True)
+            elif action == "rhythm_variation":
+                if not self.rhythm_guide.create_variation(now):
+                    print("[rhythm] no active rhythm available to vary")
+                self._report_rhythm_status(force=True)
+            elif action in {"loop_set_mode_response", "loop_set_mode_call_response"}:
+                self.loop_save_mode = "call_response" if action.endswith("call_response") else "response"
+                self._report_loop_status(force=True)
+            elif isinstance(action, str) and action.startswith("loop_save_"):
+                slot = action.rsplit("_", 1)[-1].upper()
+                try:
+                    if self._save_last_response_to_slot(slot):
+                        print(f"[loop] saved slot={slot} mode={self.loop_save_mode}")
+                    else:
+                        print("[loop] no completed AI response available to save yet")
+                except ValueError:
+                    print(f"[loop] ignored unknown save slot: {slot}")
+                self._report_loop_status(force=True)
+            elif isinstance(action, str) and action.startswith("loop_toggle_"):
+                slot = action.rsplit("_", 1)[-1].upper()
+                try:
+                    if not self.loop_bank.toggle(slot, now):
+                        print(f"[loop] slot {slot} is empty; save a response first")
+                except ValueError:
+                    print(f"[loop] ignored unknown toggle slot: {slot}")
+                self._report_loop_status(force=True)
+            elif isinstance(action, str) and action.startswith("loop_stop_") and action != "loop_stop_all":
+                slot = action.rsplit("_", 1)[-1].upper()
+                try:
+                    self.loop_bank.request_stop(slot)
+                except ValueError:
+                    print(f"[loop] ignored unknown stop slot: {slot}")
+                self._report_loop_status(force=True)
+            elif action == "loop_stop_all":
+                self._send_loop_events(outport, self.loop_bank.stop_all_now())
+                self._report_loop_status(force=True)
+            elif action == "panic_all":
+                self.playback_cancel_event.set()
+                self._send_loop_events(self._melody_output, self.loop_bank.stop_all_now())
+                self._send_drum_events(outport, self.rhythm_guide.emergency_stop())
+                self._panic_outputs(self._melody_output, outport)
+                self._report_rhythm_status(force=True)
+                self._report_loop_status(force=True)
 
     def _can_speculatively_preload(self) -> bool:
         return (
             self.args.speculative_preload
             and self.args.backend == "amt"
+            and self.args.response_strategy == "controlled_amt"
             and not self.busy.is_set()
         )
 
@@ -1908,6 +2674,19 @@ class LiveCallResponseApp:
         )
         controller = MusicalResponseController(profile, plan) if self.args.musical_control else None
         call_events = notes_to_amt_events(prompt_phrase)
+        if self.args.latency_mode == "fast":
+            events = self._generate_budgeted_amt_events(
+                call_events,
+                prompt_phrase,
+                profile,
+                plan,
+                controller,
+                plan.target_seconds if self.args.musical_control else self.args.response_seconds,
+            )
+            return events, controller.stats if controller is not None else MusicalControlStats(), (
+                time.monotonic() if events else None
+            )
+
         events: List[GeneratedEvent] = []
         first_event_time: Optional[float] = None
         for event in self.generator.generate_events(
@@ -1923,6 +2702,183 @@ class LiveCallResponseApp:
                 break
         stats = controller.stats if controller is not None else MusicalControlStats()
         return events, stats, first_event_time
+
+    def _generate_budgeted_amt_events(
+        self,
+        call_events: List[int],
+        prompt_phrase: List[CapturedNote],
+        profile: CallProfile,
+        plan: ResponsePlan,
+        controller: Optional[MusicalResponseController],
+        response_seconds: float,
+    ) -> List[GeneratedEvent]:
+        """Keep live AMT inference inside a fixed latency budget.
+
+        AMT event sampling is slower than the musical spacing between events on
+        Apple Silicon. Collecting the whole response therefore makes the player
+        miss its first-event deadline. We sample as much neural material as the
+        live budget permits, then place those pitches onto the call-derived
+        rhythmic template so playback receives a complete buffer at once.
+        """
+
+        model_queue: "queue.Queue[Optional[GeneratedEvent]]" = queue.Queue()
+        local_stop = threading.Event()
+        target_count = min(self.args.max_events, plan.target_notes)
+
+        def producer() -> None:
+            try:
+                count = 0
+                for event in self.generator.generate_events(
+                    call_events,
+                    response_seconds=response_seconds,
+                    stop_event=local_stop,
+                    controller=None,
+                ):
+                    model_queue.put(event)
+                    count += 1
+                    if count >= target_count:
+                        break
+            except Exception as exc:
+                print(f"[amt-live] model sampling failed: {exc!r}")
+            finally:
+                model_queue.put(None)
+
+        threading.Thread(target=producer, daemon=True).start()
+        deadline = time.monotonic() + self.args.amt_generation_budget
+        model_events: List[GeneratedEvent] = []
+        producer_done = False
+
+        while len(model_events) < target_count and not producer_done:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                item = model_queue.get(timeout=min(0.05, remaining))
+            except queue.Empty:
+                continue
+            if item is None:
+                producer_done = True
+            else:
+                model_events.append(item)
+
+        local_stop.set()
+        while len(model_events) < target_count:
+            try:
+                item = model_queue.get_nowait()
+            except queue.Empty:
+                break
+            if item is None:
+                break
+            model_events.append(item)
+
+        if not model_events:
+            print(
+                f"[amt-live] budget={self.args.amt_generation_budget:.2f}s "
+                "model_events=0; using immediate musical fallback"
+            )
+            return []
+
+        template = build_rescue_response_events(
+            prompt_phrase,
+            profile,
+            plan,
+            controller=None,
+            default_note_duration=self.args.default_note_duration,
+            min_note_duration=self.args.min_note_duration,
+            max_note_duration=self.args.max_note_duration,
+        )
+        if not template:
+            return model_events
+
+        blended: List[GeneratedEvent] = []
+        for index, template_event in enumerate(template[:target_count]):
+            if index < len(model_events):
+                model_event = model_events[index]
+                melodic_deviation = clamp_int(
+                    model_event.pitch - template_event.pitch,
+                    -2,
+                    2,
+                )
+                event = GeneratedEvent(
+                    tick=template_event.tick,
+                    duration_ticks=template_event.duration_ticks,
+                    pitch=template_event.pitch + melodic_deviation,
+                    instrument=model_event.instrument,
+                    velocity=clamp_int(
+                        round(template_event.velocity * 0.72 + model_event.velocity * 0.28),
+                        52,
+                        108,
+                    ),
+                )
+            else:
+                event = template_event
+                if controller is not None:
+                    controller.stats.fallback_count += 1
+
+            if controller is not None:
+                reason = controller.rejection_reason(event)
+                if reason is not None:
+                    controller.reject(reason)
+                    event = controller.fallback_event(event)
+                event = controller.accept(event)
+            blended.append(event)
+
+        print(
+            f"[amt-live] budget={self.args.amt_generation_budget:.2f}s "
+            f"model_events={len(model_events)} completed_events={len(blended)} "
+            f"key={profile.scale_root}:{profile.scale_mode}"
+        )
+        return blended
+
+    def _stream_budgeted_amt_events(
+        self,
+        call_events: List[int],
+        response_seconds: float,
+        target_count: int,
+    ) -> Iterator[GeneratedEvent]:
+        """Yield AMT events as they arrive while enforcing a live wall-time budget."""
+
+        model_queue: "queue.Queue[Optional[GeneratedEvent]]" = queue.Queue()
+        local_stop = threading.Event()
+
+        def producer() -> None:
+            try:
+                for event in self.generator.generate_events(
+                    call_events,
+                    response_seconds=response_seconds,
+                    stop_event=local_stop,
+                    controller=None,
+                ):
+                    model_queue.put(event)
+                    if local_stop.is_set():
+                        break
+            except Exception as exc:
+                print(f"[amt-stream] model sampling failed: {exc!r}")
+            finally:
+                model_queue.put(None)
+
+        threading.Thread(target=producer, daemon=True).start()
+        deadline = time.monotonic() + self.args.amt_generation_budget
+        emitted = 0
+        try:
+            while emitted < target_count and not self.stop_event.is_set():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    print(
+                        f"[amt-stream] budget={self.args.amt_generation_budget:.2f}s "
+                        f"model_events={emitted}; closing neural stream"
+                    )
+                    break
+                try:
+                    item = model_queue.get(timeout=min(0.05, remaining))
+                except queue.Empty:
+                    continue
+                if item is None:
+                    break
+                emitted += 1
+                yield item
+        finally:
+            local_stop.set()
 
     def on_candidate_endpoint(self, candidate: EndpointCandidate) -> None:
         if not self._can_speculatively_preload():
@@ -2020,20 +2976,48 @@ class LiveCallResponseApp:
             return preload
 
     def on_endpoint(self, decision: EndpointDecision) -> None:
-        if self.busy.is_set():
-            print("[endpoint] ignored while AI response is still playing")
-            self.recorder.consume_phrase(decision.cut_time)
-            return
-
         phrase = self.recorder.consume_phrase(decision.cut_time)
         if not phrase:
             print("[endpoint] no completed notes captured; ignoring")
             return
+
+        if self.busy.is_set():
+            # Do not start overlapping generated phrases: that creates a
+            # muddy, uncontrollable result in Logic.  The latest complete
+            # performer phrase replaces an older queued phrase and begins as
+            # soon as the current response has finished.
+            with self.pending_lock:
+                replaced = self.pending_response is not None
+                self.pending_response = (phrase, decision)
+            print(
+                f"[endpoint] queued phrase_len={len(phrase)} while AI response is playing "
+                f"replaced={'yes' if replaced else 'no'}"
+            )
+            return
+
         preload = self._take_matching_preload(decision, phrase)
 
+        self._start_response_cycle(phrase, decision, preload)
+
+    def _next_round_id(self) -> int:
+        with self.round_lock:
+            self.round_id += 1
+            return self.round_id
+
+    def _start_response_cycle(
+        self,
+        phrase: List[CapturedNote],
+        decision: EndpointDecision,
+        preload: Optional[SpeculativePreloadState] = None,
+        *,
+        queued: bool = False,
+    ) -> None:
+        round_id = self._next_round_id()
+
         print(
-            "[endpoint] phrase_len={} mu={:.3f}/s cutoff={:.3f}s silence={:.3f}s "
+            "[endpoint]{} phrase_len={} mu={:.3f}/s cutoff={:.3f}s silence={:.3f}s "
             "confirm={:.3f}s preload={}".format(
+                " queued->" if queued else "",
                 len(phrase),
                 decision.mu_tempo,
                 decision.tau_cutoff,
@@ -2042,9 +3026,6 @@ class LiveCallResponseApp:
                 "yes" if preload is not None else "no",
             )
         )
-        with self.round_lock:
-            self.round_id += 1
-            round_id = self.round_id
         print(f"[round {round_id}] endpoint -> generating")
         thread = threading.Thread(
             target=self.run_response_cycle,
@@ -2052,6 +3033,23 @@ class LiveCallResponseApp:
             daemon=True,
         )
         thread.start()
+
+    def _start_pending_response_or_mark_idle(self) -> None:
+        """Atomically hand the response lane to the newest queued phrase."""
+
+        with self.pending_lock:
+            pending = self.pending_response
+            self.pending_response = None
+            if pending is None:
+                self.busy.clear()
+                return
+
+        # Keep busy set during the handoff.  A third phrase arriving in this
+        # tiny interval is queued behind this one instead of racing into an
+        # overlapping response thread.
+        phrase, decision = pending
+        print(f"[endpoint] starting queued phrase_len={len(phrase)}")
+        self._start_response_cycle(phrase, decision, queued=True)
 
     def run_response_cycle(
         self,
@@ -2063,6 +3061,7 @@ class LiveCallResponseApp:
         import mido
 
         self.busy.set()
+        self.playback_cancel_event.clear()
         events_queue: "queue.Queue[Optional[GeneratedEvent]]" = queue.Queue()
         profile = analyze_call_phrase(phrase)
         prompt_phrase = clean_prompt_phrase(phrase, profile) if self.args.musical_control else phrase
@@ -2126,14 +3125,33 @@ class LiveCallResponseApp:
             )
         else:
             print(f"[round {round_id}] [plan] musical_control=off")
-        print(f"[round {round_id}] [generating] {self.args.backend.upper()} response thread started")
+        streaming_live = (
+            self.args.backend == "amt"
+            and self.args.response_strategy == "streaming_amt"
+        )
+        generator_label = (
+            "PUBLISHED MOTIF"
+            if self.args.response_strategy == "motif"
+            else "STREAMING AMT"
+            if streaming_live
+            else self.args.backend.upper()
+        )
+        print(f"[round {round_id}] [generating] {generator_label} response thread started")
         t0 = time.perf_counter()
         inference_done = threading.Event()
 
         def inference_worker() -> None:
             first_latency_reported = False
             count = 0
+            amt_generated_count = 0
+            previous_live_pitch: Optional[int] = None
             generated_events: List[GeneratedEvent] = []
+            # If speculative AMT has already consumed its full budget and
+            # produced no events, retrying exactly the same request here used
+            # to add another full budget before the legitimate empty-output
+            # fallback could play.  Keep that fact so this round goes straight
+            # to the existing Controlled-AMT fallback instead.
+            empty_preload_exhausted = False
             try:
                 response_seconds = plan.target_seconds if self.args.musical_control else self.args.response_seconds
                 event_iter = None
@@ -2162,15 +3180,66 @@ class LiveCallResponseApp:
                             f"events={len(preload.events)} cancelled={preload.cancelled} "
                             f"error={preload.error or 'none'}"
                         )
+                        empty_preload_exhausted = (
+                            not preload.cancelled
+                            and not preload.error
+                            and not preload.events
+                        )
 
                 if event_iter is None:
-                    if self.args.backend == "aria":
+                    if empty_preload_exhausted:
+                        # AMT has already been given its configured generation
+                        # window for this exact phrase.  Leave event_iter empty
+                        # so the normal, controlled empty-AMT rescue below can
+                        # respond immediately rather than running a duplicate
+                        # inference pass.
+                        event_iter = iter(())
+                        print(
+                            f"[round {round_id}] [preload] AMT empty after budget; "
+                            "using controlled fallback without duplicate inference"
+                        )
+                    elif self.args.response_strategy == "motif":
+                        motif_events = build_rescue_response_events(
+                            prompt_phrase,
+                            profile,
+                            plan,
+                            controller,
+                            default_note_duration=self.args.default_note_duration,
+                            min_note_duration=self.args.min_note_duration,
+                            max_note_duration=self.args.max_note_duration,
+                        )
+                        event_iter = iter(motif_events)
+                        print(
+                            f"[round {round_id}] [strategy] published live motif "
+                            f"events={len(motif_events)}"
+                        )
+                    elif self.args.backend == "aria":
                         event_iter = self.generator.generate_events(
                             prompt_phrase,
                             response_seconds=response_seconds,
                             stop_event=self.stop_event,
                             controller=controller,
                             live_mode=self.args.aria_live_mode,
+                        )
+                    elif streaming_live:
+                        event_iter = self._stream_budgeted_amt_events(
+                            call_events,
+                            response_seconds=response_seconds,
+                            target_count=min(self.args.max_events, plan.target_notes),
+                        )
+                    elif self.args.latency_mode == "fast":
+                        # Sample the paper AMT inside a fixed real-time budget,
+                        # then let the existing phrase controller complete and
+                        # time-shape that AMT material for playback.
+                        event_iter = iter(
+                            self._generate_budgeted_amt_events(
+                                call_events,
+                                prompt_phrase,
+                                profile,
+                                plan,
+                                controller,
+                                response_seconds,
+                            )
                         )
                     else:
                         event_iter = self.generator.generate_events(
@@ -2180,6 +3249,22 @@ class LiveCallResponseApp:
                             controller=controller,
                         )
                 for event in event_iter:
+                    if streaming_live:
+                        if controller is not None:
+                            reason = controller.rejection_reason(event)
+                            if reason is not None:
+                                controller.reject(reason)
+                                event = controller.fallback_event(event)
+                        if self.args.live_style == "pentatonic":
+                            event = project_live_event_to_call_scale(
+                                event,
+                                profile,
+                                plan,
+                                previous_live_pitch,
+                            )
+                            previous_live_pitch = event.pitch
+                        if controller is not None:
+                            event = controller.accept(event)
                     if not first_latency_reported:
                         if metrics.first_event_time is None:
                             metrics.first_event_time = time.monotonic()
@@ -2188,7 +3273,7 @@ class LiveCallResponseApp:
                             f"first_event_latency={time.perf_counter() - t0:.3f}s"
                         )
                         first_latency_reported = True
-                    if self.args.duration_match:
+                    if self.args.duration_match and not streaming_live:
                         generated_events.append(event)
                     else:
                         events_queue.put(event)
@@ -2200,11 +3285,13 @@ class LiveCallResponseApp:
                     )
                     if count >= self.args.max_events:
                         break
-                if (
-                    count == 0
-                    and self.args.fallback_on_empty
-                    and self.args.backend == "amt"
-                    and not self.stop_event.is_set()
+                amt_generated_count = count if streaming_live else 0
+                if should_use_motif_fallback(
+                    generated_count=count,
+                    fallback_on_empty=self.args.fallback_on_empty,
+                    backend=self.args.backend,
+                    response_strategy=self.args.response_strategy,
+                    stopped=self.stop_event.is_set(),
                 ):
                     rescue_events = build_rescue_response_events(
                         prompt_phrase,
@@ -2221,6 +3308,14 @@ class LiveCallResponseApp:
                             f"using motif fallback events={len(rescue_events)}"
                         )
                     for event in rescue_events:
+                        if streaming_live and self.args.live_style == "pentatonic":
+                            event = project_live_event_to_call_scale(
+                                event,
+                                profile,
+                                plan,
+                                previous_live_pitch,
+                            )
+                            previous_live_pitch = event.pitch
                         if not first_latency_reported:
                             if metrics.first_event_time is None:
                                 metrics.first_event_time = time.monotonic()
@@ -2229,7 +3324,7 @@ class LiveCallResponseApp:
                                 f"first_event_latency={time.perf_counter() - t0:.3f}s"
                             )
                             first_latency_reported = True
-                        if self.args.duration_match:
+                        if self.args.duration_match and not streaming_live:
                             generated_events.append(event)
                         else:
                             events_queue.put(event)
@@ -2242,17 +3337,72 @@ class LiveCallResponseApp:
                         if count >= self.args.max_events:
                             break
 
-                if generated_events and self.args.duration_match:
-                    if self.args.duration_match:
-                        shaped_events, raw_duration, actual_duration, stretch_factor = shape_response_duration(
-                            generated_events,
-                            plan,
-                            min_note_duration=self.args.min_note_duration,
-                            max_note_duration=self.args.max_note_duration,
-                            min_share=self.args.duration_match_min_share,
-                            max_share=self.args.duration_match_max_share,
+                if streaming_live and amt_generated_count > 0 and count < self.args.max_events:
+                    target_event_count = min(plan.target_notes, self.args.max_events)
+                    fill_count = partial_fallback_limit(
+                        amt_generated_count,
+                        target_event_count,
+                        self.args.partial_fallback_max_share,
+                    )
+                    template_events = build_rescue_response_events(
+                        prompt_phrase,
+                        profile,
+                        plan,
+                        controller=None,
+                        default_note_duration=self.args.default_note_duration,
+                        min_note_duration=self.args.min_note_duration,
+                        max_note_duration=self.args.max_note_duration,
+                    )
+                    completion_events = build_partial_motif_completion(
+                        generated_events,
+                        template_events,
+                        fill_count,
+                        grid_ticks=max(1, round(estimate_phrase_grid(prompt_phrase) * TIME_RESOLUTION)),
+                        controller=controller,
+                    )
+                    for event in completion_events:
+                        if self.args.live_style == "pentatonic":
+                            event = project_live_event_to_call_scale(
+                                event,
+                                profile,
+                                plan,
+                                previous_live_pitch,
+                            )
+                            previous_live_pitch = event.pitch
+                        events_queue.put(event)
+                        generated_events.append(event)
+                        count += 1
+                        print(
+                            f"[round {round_id}] [partial_fallback] event #{count}: "
+                            f"tick={event.tick} dur={event.duration_ticks} pitch={event.pitch}"
                         )
+                    if completion_events:
+                        print(
+                            f"[round {round_id}] [partial_fallback] "
+                            f"amt={amt_generated_count} motif={len(completion_events)} "
+                            f"target={target_event_count}"
+                        )
+
+                if generated_events and self.args.duration_match and not streaming_live:
+                    shaped_events, raw_duration, actual_duration, stretch_factor = shape_response_duration(
+                        generated_events,
+                        plan,
+                        min_note_duration=self.args.min_note_duration,
+                        max_note_duration=self.args.max_note_duration,
+                        min_share=self.args.duration_match_min_share,
+                        max_share=self.args.duration_match_max_share,
+                    )
                     generated_events = shaped_events
+                    if self.args.live_style == "pentatonic":
+                        generated_events = apply_live_pentatonic_style(
+                            generated_events,
+                            profile,
+                            plan,
+                        )
+                        print(
+                            f"[round {round_id}] [style] pentatonic root={profile.scale_root} "
+                            f"mode={profile.scale_mode} events={len(generated_events)}"
+                        )
                     count = len(generated_events)
                     metrics.raw_response_seconds = raw_duration
                     metrics.actual_response_seconds = actual_duration
@@ -2289,6 +3439,12 @@ class LiveCallResponseApp:
                         else None
                     )
             finally:
+                if generated_events:
+                    with self._last_response_lock:
+                        self._last_response = list(generated_events)
+                        self._last_call = list(phrase)
+                    print(f"[loop] latest response ready events={len(generated_events)}")
+                    self._report_loop_status(force=True)
                 metrics.generated_events = count
                 if controller is not None and not metrics.speculative_preload_used:
                     metrics.rejected_repeat_count = controller.stats.rejected_repeat_count
@@ -2307,39 +3463,41 @@ class LiveCallResponseApp:
         inference_thread.start()
 
         try:
-            output_port = resolve_port(self.args.output_port, mido.get_output_names(), "output")
-            with mido.open_output(output_port) as outport:
-                initial_buffer_events = self.args.initial_buffer_events
-                initial_buffer_timeout = self.args.initial_buffer_timeout
-                if self.args.backend == "aria" and self.args.aria_live_mode == "batch":
-                    initial_buffer_events = 1
-                    initial_buffer_timeout = max(initial_buffer_timeout, self.args.aria_batch_timeout)
-                player = ResponsePlayer(
-                    LockedOutputPort(outport, self.output_lock),
-                    events_queue,
-                    initial_buffer_events=initial_buffer_events,
-                    initial_buffer_timeout=initial_buffer_timeout,
-                    first_event_timeout=self.args.first_event_timeout,
-                    max_underrun_seconds=self.args.max_underrun_seconds,
-                    producer_done=inference_done,
-                    pitch_min=self.args.pitch_min,
-                    pitch_max=self.args.pitch_max,
-                    min_note_duration=self.args.min_note_duration,
-                    max_note_duration=self.args.max_note_duration,
-                )
-                print(f"[round {round_id}] [buffering] waiting for initial response buffer")
-                buffer_start = time.perf_counter()
-                playback_stats = player.play()
-                metrics.playback_start_time = playback_stats.playback_start_time
-                metrics.playback_end_time = playback_stats.playback_end_time
-                metrics.initial_buffer_wait = playback_stats.initial_buffer_wait
-                metrics.initial_buffer_count = playback_stats.initial_buffer_count
-                metrics.played_events = playback_stats.played_events
-                metrics.buffer_underruns = playback_stats.buffer_underruns
-                print(
-                    f"[round {round_id}] [buffering] "
-                    f"total_response_cycle={time.perf_counter() - buffer_start:.3f}s"
-                )
+            if self._melody_output is None:
+                raise RuntimeError("Logic melody MIDI output is not available")
+            initial_buffer_events = self.args.initial_buffer_events
+            initial_buffer_timeout = self.args.initial_buffer_timeout
+            if self.args.backend == "aria" and self.args.aria_live_mode == "batch":
+                initial_buffer_events = 1
+                initial_buffer_timeout = max(initial_buffer_timeout, self.args.aria_batch_timeout)
+            player = ResponsePlayer(
+                LockedOutputPort(self._melody_output, self.output_lock),
+                events_queue,
+                initial_buffer_events=initial_buffer_events,
+                initial_buffer_timeout=initial_buffer_timeout,
+                first_event_timeout=self.args.first_event_timeout,
+                max_underrun_seconds=self.args.max_underrun_seconds,
+                producer_done=inference_done,
+                pitch_min=self.args.pitch_min,
+                pitch_max=self.args.pitch_max,
+                min_note_duration=self.args.min_note_duration,
+                max_note_duration=self.args.max_note_duration,
+                rhythm_timing_provider=self.rhythm_guide.timing,
+                cancel_event=self.playback_cancel_event,
+            )
+            print(f"[round {round_id}] [buffering] waiting for initial response buffer")
+            buffer_start = time.perf_counter()
+            playback_stats = player.play()
+            metrics.playback_start_time = playback_stats.playback_start_time
+            metrics.playback_end_time = playback_stats.playback_end_time
+            metrics.initial_buffer_wait = playback_stats.initial_buffer_wait
+            metrics.initial_buffer_count = playback_stats.initial_buffer_count
+            metrics.played_events = playback_stats.played_events
+            metrics.buffer_underruns = playback_stats.buffer_underruns
+            print(
+                f"[round {round_id}] [buffering] "
+                f"total_response_cycle={time.perf_counter() - buffer_start:.3f}s"
+            )
         except Exception as exc:
             metrics.status = "error"
             metrics.error = repr(exc)
@@ -2347,34 +3505,89 @@ class LiveCallResponseApp:
         finally:
             inference_thread.join(timeout=1.0)
             self.metrics.record(metrics)
-            self.busy.clear()
+            self._start_pending_response_or_mark_idle()
 
     def run(self) -> None:
         import mido
 
         input_port = resolve_port(self.args.input_port, mido.get_input_names(), "input")
-        output_port = resolve_port(self.args.output_port, mido.get_output_names(), "output")
+        output_names = mido.get_output_names()
+        drum_output_port = resolve_port(self.args.output_port, output_names, "drum output")
+        melody_output_port = resolve_port(self.args.melody_output_port, output_names, "melody output")
+        if melody_output_port is None:
+            melody_output_port = drum_output_port
         print(f"[ports] input={input_port}")
-        print(f"[ports] output={output_port}")
+        print(f"[ports] melody_output={melody_output_port}")
+        print(f"[ports] drum_output={drum_output_port}")
         if self.args.startup_test_note:
-            send_test_output(output_port)
+            send_test_output(melody_output_port)
         print("[listening] play a MIDI Call on the selected input, then stop")
 
         start = time.monotonic()
-        with mido.open_input(input_port) as inport:
-            monitor_out = None
-            if self.args.monitor_input:
-                monitor_out = mido.open_output(output_port)
+        from contextlib import ExitStack
+
+        with mido.open_input(input_port) as inport, ExitStack() as stack:
+            melody_output = stack.enter_context(mido.open_output(melody_output_port))
+            self._melody_output = melody_output
+            drum_output = (
+                melody_output
+                if drum_output_port == melody_output_port
+                else stack.enter_context(mido.open_output(drum_output_port))
+            )
+            monitor_out = melody_output if self.args.monitor_input else None
+            if monitor_out is not None:
                 print("[monitor] forwarding human input to output")
+            self._report_rhythm_status(force=True)
+            self._report_loop_status(force=True)
             try:
                 while not self.stop_event.is_set():
+                    now = time.monotonic()
+                    self._apply_drum_controls(now, drum_output)
+                    if self.rhythm_guide.maybe_finish_learning(now):
+                        print("[rhythm] silence detected; learned pattern is now active", flush=True)
+                        self._report_rhythm_status(force=True)
+                    self._send_drum_events(drum_output, self.rhythm_guide.tick(now))
+                    self._send_loop_events(melody_output, self.loop_bank.tick(now))
                     for msg in inport.iter_pending():
                         now = time.monotonic()
+                        # MIDI note_on with velocity 0 is a note_off. Normalize it
+                        # before any busy-state filtering so no note can hang.
+                        if msg.type == "note_on" and msg.velocity == 0:
+                            msg = msg.copy(type="note_off", velocity=0)
+                        if should_capture_rhythm_pad(
+                            msg,
+                            self.rhythm_guide.learning,
+                            self.args.drum_pad_min,
+                            self.args.drum_pad_max,
+                            self.args.drum_channel,
+                        ):
+                            if self.rhythm_guide.capture(msg, now):
+                                print(
+                                    f"[rhythm_tap] velocity={int(getattr(msg, 'velocity', 0)):3d}",
+                                    flush=True,
+                                )
+                                self._report_rhythm_status(force=True)
+                            continue
+                        if is_drum_pad_note(
+                            msg,
+                            self.args.drum_pad_min,
+                            self.args.drum_pad_max,
+                            self.args.drum_channel,
+                        ):
+                            print(
+                                f"[pad] {msg.type} pitch={int(msg.note):3d} "
+                                f"velocity={int(getattr(msg, 'velocity', 0)):3d} "
+                                f"channel={int(getattr(msg, 'channel', 0)) + 1}"
+                            )
+                            self._forward_drum_message(drum_output, msg)
+                            continue
                         if msg.type == "note_on" and msg.velocity > 0:
-                            if self.busy.is_set():
-                                continue
                             if monitor_out is not None:
                                 self.forward_input_message(monitor_out, msg)
+                            # Continue recording during an AI answer.  Endpoint
+                            # handling queues the newest completed phrase, so
+                            # the performer can play continuously without
+                            # creating overlapping generated responses.
                             self.recorder.note_on(msg.note, msg.velocity, getattr(msg, "channel", 0), now)
                             self.vad.observe_note_on(msg.note, msg.velocity, now)
                             print(
@@ -2382,25 +3595,44 @@ class LiveCallResponseApp:
                                 f"mu={self.vad.mu_tempo():.3f}/s cutoff={self.vad.tau_cutoff():.3f}s"
                             )
                         elif msg.type == "note_off" or (msg.type == "note_on" and msg.velocity == 0):
-                            if self.busy.is_set():
-                                continue
                             if monitor_out is not None:
                                 self.forward_input_message(monitor_out, msg)
+                                self._monitor_active_notes.discard(
+                                    (getattr(msg, "note", 0), getattr(msg, "channel", 0))
+                                )
+                            # Releases must be recorded during AI playback as
+                            # well; otherwise the queued phrase can contain
+                            # stuck notes or never reach its endpoint.
                             self.recorder.note_off(msg.note, getattr(msg, "channel", 0), now)
                             print(f"[note_off] pitch={msg.note:3d} velocity=  0")
 
                     self.vad.tick()
+                    self._report_rhythm_status()
+                    self._report_loop_status()
                     if self.args.duration and time.monotonic() - start >= self.args.duration:
                         self.stop_event.set()
                         break
                     time.sleep(self.args.poll_interval)
             finally:
                 if monitor_out is not None:
-                    monitor_out.close()
+                    with self.output_lock:
+                        for pitch, channel in sorted(self._monitor_active_notes):
+                            monitor_out.send(
+                                mido.Message("note_off", note=pitch, velocity=0, channel=channel)
+                            )
+                    self._monitor_active_notes.clear()
+                self._send_loop_events(melody_output, self.loop_bank.stop_all_now())
+                self._send_drum_events(drum_output, self.rhythm_guide.emergency_stop())
+                self._panic_outputs(melody_output, drum_output)
+                self._melody_output = None
 
     def forward_input_message(self, outport, msg) -> None:
         with self.output_lock:
             outport.send(msg.copy(time=0))
+        if msg.type == "note_on" and msg.velocity > 0:
+            self._monitor_active_notes.add(
+                (getattr(msg, "note", 0), getattr(msg, "channel", 0))
+            )
 
 
 def list_ports() -> None:
@@ -2452,6 +3684,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input-port", default=DEFAULT_INPUT_PORT)
     parser.add_argument("--output-port", default=DEFAULT_OUTPUT_PORT)
     parser.add_argument(
+        "--melody-output-port",
+        default=DEFAULT_MELODY_OUTPUT_PORT,
+        help="MIDI output port for AI melody and saved loops; drum output uses --output-port",
+    )
+    parser.add_argument(
         "--backend",
         choices=["amt", "aria"],
         default="amt",
@@ -2484,8 +3721,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hf-token", default=None, help="optional Hugging Face token for gated/private checkpoints")
     parser.add_argument("--response-seconds", type=float, default=8.0)
     parser.add_argument("--max-events", type=int, default=64)
+    parser.add_argument(
+        "--amt-generation-budget",
+        type=float,
+        default=1.8,
+        help="maximum live seconds spent sampling AMT before any bounded completion",
+    )
     parser.add_argument("--top-p", type=float, default=0.98)
     parser.add_argument("--temperature", type=float, default=0.9)
+    parser.add_argument(
+        "--response-strategy",
+        choices=["controlled_amt", "streaming_amt", "motif"],
+        default="controlled_amt",
+        help=(
+            "controlled_amt keeps the paper-compatible AMT path; streaming_amt plays AMT "
+            "events while generation continues and permits only bounded motif completion; "
+            "motif uses the deterministic transform by itself"
+        ),
+    )
+    parser.add_argument(
+        "--partial-fallback-max-share",
+        type=float,
+        default=0.50,
+        help="maximum target-note share supplied by motif after a non-empty AMT stream",
+    )
     parser.add_argument(
         "--musical-control",
         action=argparse.BooleanOptionalAction,
@@ -2524,6 +3783,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--response-length-ratio", type=float, default=1.0)
     parser.add_argument("--response-note-ratio", type=float, default=1.0)
     parser.add_argument(
+        "--live-style",
+        choices=["chromatic", "pentatonic"],
+        default="chromatic",
+        help="optional live A5/A6 style projection; repository-default chromatic remains available",
+    )
+    parser.add_argument(
         "--latency-mode",
         choices=sorted(LATENCY_PRESETS),
         default="classic",
@@ -2559,6 +3824,29 @@ def build_parser() -> argparse.ArgumentParser:
         "--monitor-input",
         action="store_true",
         help="forward human MIDI input to the output port so the Call is audible",
+    )
+    parser.add_argument(
+        "--control-file",
+        default=None,
+        help="newline-delimited live control file used by the performance console",
+    )
+    parser.add_argument(
+        "--drum-pad-min",
+        type=int,
+        default=36,
+        help="lowest MIDI note treated as a drum pad",
+    )
+    parser.add_argument(
+        "--drum-pad-max",
+        type=int,
+        default=51,
+        help="highest MIDI note treated as a drum pad (MiniLab 3 commonly uses 36..51)",
+    )
+    parser.add_argument(
+        "--drum-channel",
+        type=int,
+        default=9,
+        help="zero-based MIDI channel used for Logic's drum track",
     )
     parser.add_argument("--pitch-min", type=int, default=36, help="minimum AI playback MIDI pitch")
     parser.add_argument("--pitch-max", type=int, default=96, help="maximum AI playback MIDI pitch")
@@ -2596,6 +3884,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise SystemExit("--response-seconds must be positive.")
     if args.max_events < 1:
         raise SystemExit("--max-events must be at least 1.")
+    if args.amt_generation_budget <= 0:
+        raise SystemExit("--amt-generation-budget must be positive.")
+    if not 0.0 <= args.partial_fallback_max_share <= 1.0:
+        raise SystemExit("--partial-fallback-max-share must be in [0, 1].")
     if args.same_pitch_limit < 1:
         raise SystemExit("--same-pitch-limit must be at least 1.")
     if not 0.0 < args.duration_match_min_share <= 1.0:
@@ -2632,6 +3924,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise SystemExit("--aria-stream-fallback-seconds must be positive.")
     if args.aria_batch_timeout <= 0:
         raise SystemExit("--aria-batch-timeout must be positive.")
+    if not 0 <= args.drum_pad_min <= args.drum_pad_max <= 127:
+        raise SystemExit("--drum-pad-min/--drum-pad-max must define a MIDI range from 0 to 127.")
+    if not 0 <= args.drum_channel <= 15:
+        raise SystemExit("--drum-channel must be a MIDI channel from 0 to 15.")
 
 
 def apply_latency_preset(args: argparse.Namespace) -> None:
