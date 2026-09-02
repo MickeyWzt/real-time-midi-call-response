@@ -20,7 +20,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install lightweight test dependencies
-        run: python -m pip install mido fastapi uvicorn
+        run: python -m pip install mido numpy fastapi uvicorn
 
       - name: Verify code compiles
         run: python -m compileall code
