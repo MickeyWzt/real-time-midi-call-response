@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,13 @@ class PianoHostManager:
         self._process: Optional[subprocess.Popen] = None
 
     def status(self) -> PianoHostStatus:
+        if os.name != "nt":
+            return PianoHostStatus(
+                available=True,
+                running=False,
+                exe_path="",
+                message="External DAW audio routing is ready.",
+            )
         if not PIANO_HOST_EXE.exists():
             return PianoHostStatus(
                 available=False,
@@ -50,6 +58,8 @@ class PianoHostManager:
 
     def launch(self) -> PianoHostStatus:
         current = self.status()
+        if os.name != "nt":
+            return current
         if not current.available:
             return current
         if current.running:
@@ -63,6 +73,8 @@ class PianoHostManager:
         return self.status()
 
     def stop(self) -> PianoHostStatus:
+        if os.name != "nt":
+            return self.status()
         if self._process is not None and self._process.poll() is None:
             self._process.terminate()
         self._process = None

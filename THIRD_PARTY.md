@@ -26,11 +26,21 @@ are not included in this repository.
 The realtime demo is designed for Windows with loopMIDI and an external or
 virtual MIDI input. Optional piano plugins or sample libraries are not bundled.
 
+## Apple AudioUnit SDK
+
+The optional Logic MIDI FX source references Apple's AudioUnit SDK as a pinned
+Git submodule at commit `bd98b31feff57a15989fcfab4cd86dc63382b1ac`:
+https://github.com/apple/AudioUnitSDK.git. The upstream SDK is licensed under
+Apache License 2.0. Its contents are fetched separately with
+`git clone --recurse-submodules` and are not embedded in the repository archive.
+Any future binary distribution must include the applicable upstream notices.
+
 ## Excluded assets
 
 The repository intentionally excludes:
 
 - Hugging Face caches and model weights
 - VST plugins and standalone audio software
+- Apple AudioUnit SDK contents (pinned submodule reference only)
 - piano sample libraries
 - thesis PDFs, private notes, and experiment logs

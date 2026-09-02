@@ -15,7 +15,7 @@
       "type": "Researcher"
     }
   ],
-  "description": "Code and audit outputs for adapting a frozen Anticipatory Music Transformer to turn-based MIDI call-and-response. Version 1.2.0 adds Call/source-cluster inference, matched-versus-mismatched symbolic feature association, corrected first-commit endpoint semantics, commit-anchored scheduler replay, an A4 fallback guard, path-redacted provenance, regression tests, and the revised manuscript. No human-participant evidence is included.",
+  "description": "Code and audit outputs for adapting a frozen Anticipatory Music Transformer to turn-based MIDI call-and-response. Version 1.2.0 adds Call/source-cluster inference, matched-versus-mismatched symbolic feature association, corrected first-commit endpoint semantics, commit-anchored scheduler replay, an A4 fallback guard, path-redacted provenance, regression tests, the revised manuscript, and an optional live-studio runtime extension. The live studio is outside the paper evidence and has not been validated here with physical MIDI hardware, DAW audio routing, or performers. No human-participant evidence is included.",
   "keywords": [
     "symbolic music generation",
     "MIDI",
@@ -30,5 +30,5 @@
     "latency replay",
     "speculative preload"
   ],
-  "notes": "This archive excludes model weights, license-sensitive source datasets, generated MIDI response batches, all human-participant response data and aggregate outcomes, private answer keys, deployment credentials, piano sample libraries, VST plugins, and DAWs. Published trial tables contain path-redacted filenames and SHA-256 values; recomputing the feature-association analysis from MIDI requires locally regenerated response files."
+  "notes": "This archive excludes model weights, license-sensitive source datasets, generated MIDI response batches, all human-participant response data and aggregate outcomes, private answer keys, deployment credentials, piano sample libraries, VST plugins, DAWs, and Apple AudioUnit SDK contents. The SDK is referenced as a pinned third-party submodule and fetched separately under its own license. Published trial tables contain path-redacted filenames and SHA-256 values; recomputing the feature-association analysis from MIDI requires locally regenerated response files."
 }

@@ -1,9 +1,14 @@
 const $ = (id) => document.getElementById(id);
+document.body.classList.toggle(
+    "embedded-logic",
+    new URLSearchParams(window.location.search).get("embedded") === "logic"
+);
 
 const state = {
     ws: null,
     connected: false,
     running: false,
+    sessionStartedAt: null,
     sessionInput: null,
     devices: { inputs: [], outputs: [], selected_input: null, selected_output: null, virtual_mode: true },
     pianoHost: null,
@@ -29,16 +34,34 @@ const state = {
         samplerReady: false,
         ready: false
     },
-    webMidi: {
-        access: null,
-        inputCount: 0,
-        connectedNames: []
-    },
     round: {
         id: null,
-        state: "Idle",
+        state: "idle",
         firstEvent: "--",
         underruns: 0
+    },
+    rhythm: {
+        state: "idle",
+        tap_count: 0,
+        bpm: 100,
+        confidence: 0,
+        bars: 1,
+        steps_per_bar: 16,
+        pattern: [],
+        loop_seconds: 0,
+        learning: false,
+        playing: false,
+        replacing: false,
+        stopping: false,
+        saved_slots: [],
+        current_slot: null,
+        queued_slot: null
+    },
+    loopBank: {
+        mode: "response",
+        latest_ready: false,
+        slots: ["A", "B", "C", "D"].map((name) => ({ name })),
+        lastPlaybackAt: 0
     }
 };
 
@@ -52,6 +75,9 @@ const statusConnection = $("connection-status");
 const statusEngine = $("engine-status");
 const statusPianoHost = $("piano-host-status");
 const statusWebMidi = $("web-midi-status");
+const statusTestMode = $("test-mode-status");
+const statusRhythm = $("rhythm-status");
+const statusLoop = $("loop-status");
 const logPanel = $("log-panel");
 const canvas = $("visualizer-canvas");
 const ctx = canvas.getContext("2d");
@@ -75,21 +101,31 @@ const MODEL_CONFIG = {
     amt_small: {
         backend: "amt",
         model_id: "stanford-crfm/music-small-800k",
-        aria_model_id: "model_weights/aria-medium-gen",
         label: "AMT Small / stanford-crfm/music-small-800k"
-    },
-    amt_medium: {
-        backend: "amt",
-        model_id: "stanford-crfm/music-medium-800k",
-        aria_model_id: "model_weights/aria-medium-gen",
-        label: "AMT Medium / stanford-crfm/music-medium-800k"
-    },
-    aria: {
-        backend: "aria",
-        model_id: "stanford-crfm/music-small-800k",
-        aria_model_id: "model_weights/aria-medium-gen",
-        label: "ARIA / local aria-medium-gen"
     }
+};
+
+const ROUND_LABELS = {
+    idle: "待命",
+    generating: "AI 思考中",
+    analysis: "分析乐句",
+    plan: "组织回应",
+    first_event: "回应已生成",
+    generated: "准备播放",
+    playback: "AI 回应中",
+    done: "回应完成",
+    ok: "完成",
+    underrun: "播放等待"
+};
+
+const SESSION_LABELS = {
+    starting: "正在加载",
+    listening: "正在聆听",
+    generating: "正在思考",
+    playback_pending: "准备回应",
+    buffering: "准备播放",
+    playback: "正在回应",
+    done: "回应完成"
 };
 
 function send(payload) {
@@ -105,17 +141,20 @@ function setStatus(el, text, mode) {
 
 function connect() {
     const protocol = location.protocol === "https:" ? "wss" : "ws";
-    state.ws = new WebSocket(`${protocol}://${location.host}/ws`);
+    const token = document.querySelector('meta[name="mfp-session-token"]')?.content || "";
+    const socketUrl = new URL(`${protocol}://${location.host}/ws`);
+    socketUrl.searchParams.set("token", token);
+    state.ws = new WebSocket(socketUrl);
 
     state.ws.onopen = () => {
         state.connected = true;
-        setStatus(statusConnection, "Interface connected", "connected");
+        setStatus(statusConnection, "控制服务已连接", "connected");
         send({ type: "refresh_devices" });
     };
 
     state.ws.onclose = () => {
         state.connected = false;
-        setStatus(statusConnection, "Reconnecting", "warning");
+        setStatus(statusConnection, "正在重新连接", "warning");
         setTimeout(connect, 1200);
     };
 
@@ -132,8 +171,30 @@ function handleMessage(payload) {
         renderSession(payload);
     } else if (payload.type === "piano_host_status") {
         renderPianoHost(payload);
+    } else if (payload.type === "rhythm_status") {
+        renderRhythm(payload);
+    } else if (payload.type === "drum_status") {
+        renderRhythm({
+            state: payload.recording ? "learning" : payload.playing ? "running" : payload.state,
+            tap_count: payload.event_count || 0,
+            learning: Boolean(payload.recording),
+            playing: Boolean(payload.playing),
+            replacing: Boolean(payload.replacing),
+            stopping: Boolean(payload.stopping)
+        });
+    } else if (payload.type === "loop_bank_status") {
+        renderLoopBank(payload);
     } else if (payload.type === "visual_note") {
         pushVisualNote(payload);
+    } else if (payload.type === "playback_note") {
+        if (payload.bus === "loop" && payload.event === "note_on") {
+            state.loopBank.lastPlaybackAt = Date.now();
+            setStatus(statusLoop, "回应记忆正在发声", "connected");
+        }
+        handlePlaybackNote(payload);
+    } else if (payload.type === "panic_status") {
+        stopAllLocalAudio();
+        log(payload.message || "所有声音已释放", payload.ok ? "info" : "error");
     } else if (payload.type === "round_state") {
         renderRoundState(payload);
     } else if (payload.type === "metrics") {
@@ -154,53 +215,212 @@ function renderConfig(payload) {
         $("temp-display").textContent = payload.temperature;
     }
     if (payload.backend && backendSelect) {
-        const configKey = payload.backend === "aria"
-            ? "aria"
-            : payload.model_id === MODEL_CONFIG.amt_medium.model_id
-                ? "amt_medium"
-                : "amt_small";
-        backendSelect.value = configKey;
-        $("backend-display").textContent = payload.backend.toUpperCase();
-        const modelLabel = payload.backend === "aria"
-            ? `ARIA / ${payload.aria_model_id || MODEL_CONFIG.aria.aria_model_id}`
-            : `${configKey === "amt_medium" ? "AMT Medium" : "AMT Small"} / ${payload.model_id || MODEL_CONFIG.amt_small.model_id}`;
-        $("model-note").textContent = `Current: ${modelLabel}`;
+        backendSelect.value = "amt_small";
+    }
+    if (payload.response_strategy) {
+        $("backend-display").textContent = "现场流式";
+        $("response-engine-name").textContent = "Streaming AMT";
+        $("response-engine-subtitle").textContent = "AMT 主体 + 动态调性 + 有限补齐";
+        $("model-note").textContent = "AMT 音符生成后立即进入播放队列；Motif 只在空输出或 AMT 已形成主体后的有限尾部补齐中使用。";
     }
 }
 
 function renderSession(payload) {
     state.running = Boolean(payload.running);
+    const startedAt = Number(payload.started_at || 0);
+    if (state.running && startedAt && state.sessionStartedAt !== startedAt) {
+        state.sessionStartedAt = startedAt;
+        resetRoundDisplay();
+    } else if (!state.running) {
+        state.sessionStartedAt = null;
+    }
     if (payload.input_port !== undefined) {
         state.sessionInput = payload.input_port;
+        if (state.running && payload.input_port) {
+            state.selectedInput = payload.input_port;
+            if (Array.from(selectMidi.options).some((option) => option.value === payload.input_port)) {
+                selectMidi.value = payload.input_port;
+            }
+        }
     }
+    selectMidi.disabled = state.running;
     btnStart.classList.toggle("hidden", state.running);
     btnStop.classList.toggle("hidden", !state.running);
 
     if (state.running) {
-        const label = payload.status ? payload.status.replaceAll("_", " ") : "running";
-        setStatus(statusEngine, `Engine ${label}`, "connected");
+        const label = SESSION_LABELS[payload.status] || "运行中";
+        setStatus(statusEngine, `AI ${label}`, "connected");
         $("selected-source").textContent = payload.input_port || "Live input";
     } else if (payload.status === "error") {
-        setStatus(statusEngine, "Engine error", "error");
+        setStatus(statusEngine, "AI 发生错误", "error");
     } else {
-        setStatus(statusEngine, "Engine idle", "idle");
+        setStatus(statusEngine, "AI 尚未启动", "idle");
     }
 
     if (payload.round_id !== null && payload.round_id !== undefined) {
         state.round.id = payload.round_id;
         $("round-id").textContent = String(payload.round_id);
     }
+    renderRhythm(state.rhythm);
+    renderLoopBank(state.loopBank);
+    renderPerformanceMode();
+}
+
+function resetRoundDisplay() {
+    state.round = { id: null, state: "idle", firstEvent: "--", underruns: 0 };
+    $("round-id").textContent = "--";
+    $("round-state").textContent = "待命";
+    $("first-event").textContent = "--";
+    $("underruns").textContent = "0";
+    $("stage-subtitle").textContent = "弹奏一句并自然停顿，AI 会接着回应。";
+}
+
+function isComputerTestMode() {
+    const input = String(state.sessionInput || state.selectedInput || "").toLowerCase();
+    return input.includes("python_in") || Boolean(state.devices.virtual_mode);
+}
+
+function renderPerformanceMode() {
+    if (isComputerTestMode()) {
+        setStatus(statusTestMode, "电脑键盘 → Logic", "connected");
+        return;
+    }
+    setStatus(statusTestMode, "MiniLab 模式", "connected");
 }
 
 function renderPianoHost(payload) {
     state.pianoHost = payload;
-    if (!payload.available) {
-        setStatus(statusPianoHost, "Piano host missing", "error");
-    } else if (payload.running) {
-        setStatus(statusPianoHost, "Piano host running", "connected");
+    setStatus(statusPianoHost, "Logic 唯一音频输出", "connected");
+}
+
+function renderRhythm(payload) {
+    state.rhythm = { ...state.rhythm, ...payload };
+    const rhythm = state.rhythm;
+    const labels = {
+        idle: "待命",
+        learning: "正在识别",
+        running: "节奏运行中",
+        replacing: "下一小节替换",
+        stopping: "下一小节停止"
+    };
+    const label = labels[rhythm.state] || "待命";
+    $("rhythm-state-label").textContent = label;
+    setStatus(statusRhythm, `节奏 ${label}`, rhythm.learning || rhythm.playing ? "connected" : "idle");
+
+    if (rhythm.learning) {
+        $("rhythm-detail").textContent = rhythm.tap_count > 0
+            ? `已收到 ${rhythm.tap_count} 次敲击。继续示范，停下约两秒会自动完成识别。`
+            : "现在用空格、TAP 按钮或 MiniLab 的 Pad 示范节奏。键盘琴键仍可正常演奏旋律。";
+    } else if (rhythm.replacing) {
+        $("rhythm-detail").textContent = "新节奏已经识别，会在下一小节边界自然替换当前伴奏。";
+    } else if (rhythm.stopping) {
+        $("rhythm-detail").textContent = "伴奏会在当前小节结束时停止。";
+    } else if (rhythm.playing) {
+        $("rhythm-detail").textContent = "MFP DRUMS 正在接收稳定鼓组 MIDI；MFP MELODY 的输入和 AI 回应会同时保持可用。";
     } else {
-        setStatus(statusPianoHost, "Piano host ready", "idle");
+        $("rhythm-detail").textContent = state.running
+            ? "点“学习新节奏”，然后敲出你想要的速度和重音。"
+            : "先启动引擎，再示范你想要的节奏。";
     }
+
+    $("rhythm-bpm").textContent = rhythm.playing || rhythm.replacing ? Math.round(Number(rhythm.bpm || 0)) : "--";
+    $("rhythm-meter-label").textContent = `4/4 · ${Math.max(1, Number(rhythm.bars || 1))} 小节`;
+    $("rhythm-confidence").textContent = rhythm.learning
+        ? `${rhythm.tap_count || 0} 次敲击`
+        : rhythm.playing
+            ? `识别 ${Math.round(Number(rhythm.confidence || 0) * 100)}%`
+            : "等待示范";
+    renderRhythmPattern(rhythm);
+
+    $("rhythm-tap-btn").disabled = !state.running || !rhythm.learning;
+    $("rhythm-learn-btn").disabled = !state.running || rhythm.learning;
+    $("rhythm-finish-btn").disabled = !state.running || !rhythm.learning || rhythm.tap_count < 3;
+    $("rhythm-stop-btn").disabled = !state.running || !rhythm.playing;
+    $("rhythm-stop-now-btn").disabled = !state.running || (!rhythm.playing && !rhythm.learning);
+    $("rhythm-variation-btn").disabled = !state.running || !rhythm.playing;
+    renderRhythmBank(rhythm);
+}
+
+function renderRhythmBank(rhythm) {
+    const saved = new Set(Array.isArray(rhythm.saved_slots) ? rhythm.saved_slots : []);
+    for (const slot of ["A", "B", "C", "D"]) {
+        const card = document.querySelector(`.rhythm-slot[data-slot="${slot}"]`);
+        if (!card) continue;
+        const isCurrent = rhythm.current_slot === slot;
+        const isQueued = rhythm.queued_slot === slot;
+        card.classList.toggle("has-content", saved.has(slot));
+        card.classList.toggle("playing", isCurrent);
+        card.classList.toggle("queued", isQueued);
+        card.querySelector("span").textContent = isQueued
+            ? "下一小节切换"
+            : isCurrent
+                ? `${Math.round(Number(rhythm.bpm || 0))} BPM · 使用中`
+                : saved.has(slot)
+                    ? `${Math.round(Number(rhythm.bpm || 0))} BPM · 已保存`
+                    : "空";
+        card.querySelector(".rhythm-save").disabled = !state.running || !rhythm.playing;
+        card.querySelector(".rhythm-load").disabled = !state.running || !saved.has(slot);
+    }
+}
+
+function renderRhythmPattern(rhythm) {
+    const root = $("rhythm-pattern");
+    const stepsPerBar = Math.max(1, Number(rhythm.steps_per_bar || 16));
+    const totalSteps = Math.min(64, stepsPerBar * Math.max(1, Number(rhythm.bars || 1)));
+    const active = new Set(Array.isArray(rhythm.pattern) ? rhythm.pattern.map(Number) : []);
+    root.innerHTML = "";
+    for (let step = 0; step < totalSteps; step += 1) {
+        const cell = document.createElement("span");
+        cell.className = "rhythm-step";
+        if (step % 4 === 0) cell.classList.add("beat");
+        if (active.has(step)) cell.classList.add("hit");
+        root.appendChild(cell);
+    }
+}
+
+function renderLoopBank(payload) {
+    state.loopBank = {
+        ...state.loopBank,
+        ...payload,
+        slots: Array.isArray(payload.slots) ? payload.slots : state.loopBank.slots
+    };
+    const bank = state.loopBank;
+    const modeSelect = $("loop-save-mode");
+    if (modeSelect && modeSelect.value !== bank.mode) modeSelect.value = bank.mode;
+    const ready = Boolean(bank.latest_ready);
+    const active = bank.slots.some((slot) => slot.playing);
+    const recentlyHeard = Date.now() - Number(bank.lastPlaybackAt || 0) < 900;
+    setStatus(
+        statusLoop,
+        active ? (recentlyHeard ? "回应记忆正在发声" : "回应记忆播放中") : ready ? "回应可以保存" : "回应记忆为空",
+        active || ready ? "connected" : "idle"
+    );
+    $("loop-detail").textContent = ready
+        ? (bank.mode === "call_response" ? "最近一轮已准备好：保存会记录你的句子和 AI 回应。" : "最近一轮已准备好：保存会只记录 AI 回应。")
+        : "等 AI 完成一轮回应后，就可以保存到 A、B、C 或 D。";
+
+    for (const slot of bank.slots) {
+        const card = document.querySelector(`.loop-slot[data-slot="${slot.name}"]`);
+        if (!card) continue;
+        card.classList.toggle("has-content", Boolean(slot.has_content));
+        card.classList.toggle("playing", Boolean(slot.playing));
+        card.classList.toggle("stopping", Boolean(slot.stopping));
+        const meta = card.querySelector("span");
+        if (meta) {
+            if (slot.playing && slot.stopping) meta.textContent = "本轮后停";
+            else if (slot.playing) meta.textContent = "循环播放中 · 已发送到 Logic";
+            else if (slot.has_content) meta.textContent = `${slot.event_count} 音符 · ${Number(slot.loop_seconds || 0).toFixed(1)}s`;
+            else meta.textContent = "空";
+        }
+        const save = card.querySelector(".loop-save");
+        const toggle = card.querySelector(".loop-toggle");
+        if (save) save.disabled = !state.running || !ready;
+        if (toggle) {
+            toggle.disabled = !state.running || !slot.has_content;
+            toggle.textContent = slot.playing ? "下一轮停止" : "播放";
+        }
+    }
+    $("loop-stop-all-btn").disabled = !state.running || !active;
 }
 
 function renderDevices() {
@@ -211,7 +431,7 @@ function renderDevices() {
     if (inputs.length === 0) {
         const option = document.createElement("option");
         option.value = "";
-        option.textContent = "No MIDI input found";
+        option.textContent = "未找到 MIDI 输入";
         selectMidi.appendChild(option);
     } else {
         for (const name of inputs) {
@@ -227,19 +447,23 @@ function renderDevices() {
 
     $("midi-count").textContent = String(inputs.length);
     $("output-count").textContent = String((state.devices.outputs || []).length);
-    $("selected-source").textContent = state.selectedInput || "Virtual keyboard";
+    $("selected-source").textContent = state.selectedInput || "电脑键盘";
 
-    if (state.devices.virtual_mode) {
-        $("device-note").textContent = "No physical input is selected. The on-screen keyboard is armed.";
+    if (state.devices.midi_error) {
+        $("device-note").textContent = `CoreMIDI unavailable: ${state.devices.midi_error}`;
+    } else if (state.devices.virtual_mode) {
+        $("device-note").textContent = "电脑模拟模式：字母键弹旋律，空格键示范节奏；功能与连接 MiniLab 时一致。";
     } else {
-        $("device-note").textContent = `Hardware input armed: ${state.devices.selected_input}`;
+        $("device-note").textContent = `已选择：${state.selectedInput || state.devices.selected_input}`;
     }
+    renderPerformanceMode();
 }
 
 function renderRoundState(payload) {
     const data = payload.data || {};
-    const label = payload.state ? payload.state.replaceAll("_", " ") : "Idle";
-    state.round.state = label;
+    const rawState = payload.state || "idle";
+    const label = ROUND_LABELS[rawState] || rawState.replaceAll("_", " ");
+    state.round.state = rawState;
     $("round-state").textContent = label;
 
     if (payload.round_id !== null && payload.round_id !== undefined) {
@@ -254,13 +478,13 @@ function renderRoundState(payload) {
         $("underruns").textContent = String(data.buffer_underruns);
     }
     if (Number.isFinite(data.call_notes)) {
-        $("stage-subtitle").textContent = `Call notes ${data.call_notes}${data.target_notes ? ` / target response ${data.target_notes}` : ""}`;
+        $("stage-subtitle").textContent = `收到 ${data.call_notes} 个音符${data.target_notes ? `，计划回应 ${data.target_notes} 个音符` : ""}`;
     }
 }
 
 function renderMetrics(payload) {
     $("round-id").textContent = String(payload.round_id ?? "--");
-    $("round-state").textContent = payload.status || "metrics";
+    $("round-state").textContent = ROUND_LABELS[payload.status] || payload.status || "完成";
     $("first-event").textContent = payload.first_event || "--";
     $("underruns").textContent = String(payload.underruns ?? 0);
 }
@@ -279,14 +503,15 @@ function initAudio() {
     if (state.audio.ctx) {
         if (state.audio.ctx.state === "suspended") state.audio.ctx.resume();
         state.audio.ready = true;
-        $("audio-status").textContent = "READY";
-        $("sampler-detail").textContent = state.audio.samplerReady ? "Autumn Ready" : "Synth Piano";
+        $("audio-status").textContent = "LOGIC MIDI";
+        $("sampler-detail").textContent = "MFP MELODY";
+        renderPerformanceMode();
         return;
     }
 
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     if (!AudioContext) {
-        $("audio-status").textContent = "Browser audio unavailable";
+        $("audio-status").textContent = "LOGIC MIDI";
         return;
     }
 
@@ -319,9 +544,9 @@ function initAudio() {
     state.audio.reverb = reverb;
     state.audio.wet = wet;
     state.audio.ready = true;
-    $("audio-status").textContent = "READY";
-    $("sampler-detail").textContent = "Synth Piano";
-    loadAutumnSampler();
+    $("audio-status").textContent = "LOGIC MIDI";
+    $("sampler-detail").textContent = "MFP MELODY";
+    renderPerformanceMode();
 }
 
 function midiToFreq(pitch) {
@@ -430,7 +655,7 @@ async function getAutumnBuffer(region) {
     return loading;
 }
 
-function playAutumnBuffer(pitch, velocity, region, buffer) {
+function playAutumnBuffer(pitch, velocity, region, buffer, voiceKey = pitch) {
     const audio = state.audio;
     const now = audio.ctx.currentTime;
     const source = audio.ctx.createBufferSource();
@@ -452,11 +677,11 @@ function playAutumnBuffer(pitch, velocity, region, buffer) {
     gain.connect(audio.master);
     source.start(now);
     source.onended = () => {
-        if (audio.active.get(pitch)?.source === source) {
-            audio.active.delete(pitch);
+        if (audio.active.get(voiceKey)?.source === source) {
+            audio.active.delete(voiceKey);
         }
     };
-    audio.active.set(pitch, { kind: "sample", source, gain });
+    audio.active.set(voiceKey, { kind: "sample", source, gain });
     return true;
 }
 
@@ -494,16 +719,16 @@ function schedulePianoPartial(audioCtx, output, freq, now, level, ratio, attack,
     return { osc, gain };
 }
 
-function playLocalPiano(pitch, velocity = 96) {
+function playLocalPiano(pitch, velocity = 96, voiceKey = pitch) {
     initAudio();
     const audio = state.audio;
-    if (!audio.ctx || audio.active.has(pitch)) return;
+    if (!audio.ctx || audio.active.has(voiceKey)) return;
 
     const region = findAutumnRegion(pitch, velocity);
     if (region) {
         const url = `/static/piano_samples/autumn/${region.url}`;
         if (audio.sampleBuffers.has(url)) {
-            playAutumnBuffer(pitch, velocity, region, audio.sampleBuffers.get(url));
+            playAutumnBuffer(pitch, velocity, region, audio.sampleBuffers.get(url), voiceKey);
             return;
         }
         getAutumnBuffer(region);
@@ -556,12 +781,12 @@ function playLocalPiano(pitch, velocity = 96) {
     body.connect(voiceGain);
     voiceGain.connect(audio.master);
 
-    audio.active.set(pitch, { partials, hammer, voiceGain });
+    audio.active.set(voiceKey, { partials, hammer, voiceGain });
 }
 
-function stopLocalPiano(pitch) {
+function stopLocalPiano(pitch, voiceKey = pitch) {
     const audio = state.audio;
-    const voice = audio.active.get(pitch);
+    const voice = audio.active.get(voiceKey);
     if (!audio.ctx || !voice) return;
 
     const now = audio.ctx.currentTime;
@@ -573,7 +798,7 @@ function stopLocalPiano(pitch) {
         } catch (error) {
             // The sample may have naturally ended before key release.
         }
-        audio.active.delete(pitch);
+        audio.active.delete(voiceKey);
         return;
     }
 
@@ -584,7 +809,87 @@ function stopLocalPiano(pitch) {
         partial.gain.gain.setTargetAtTime(0.0001, now, 0.28);
         partial.osc.stop(now + 1.15);
     }
-    audio.active.delete(pitch);
+    audio.active.delete(voiceKey);
+}
+
+function makeNoiseBuffer(audioCtx, seconds) {
+    const length = Math.max(1, Math.floor(audioCtx.sampleRate * seconds));
+    const buffer = audioCtx.createBuffer(1, length, audioCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+    return buffer;
+}
+
+function playLocalDrum(note, velocity = 96) {
+    initAudio();
+    const audio = state.audio;
+    if (!audio.ctx || !audio.master) return;
+
+    const now = audio.ctx.currentTime;
+    const level = Math.max(0.2, Math.min(1, velocity / 127));
+    const output = audio.ctx.createGain();
+    output.gain.value = 0.5 + level * 0.75;
+    output.connect(audio.master);
+
+    if (note === 36) {
+        const osc = audio.ctx.createOscillator();
+        const gain = audio.ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(145, now);
+        osc.frequency.exponentialRampToValueAtTime(46, now + 0.16);
+        gain.gain.setValueAtTime(0.9, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.34);
+        osc.connect(gain);
+        gain.connect(output);
+        osc.start(now);
+        osc.stop(now + 0.36);
+        return;
+    }
+
+    if ([45, 43].includes(note)) {
+        const osc = audio.ctx.createOscillator();
+        const gain = audio.ctx.createGain();
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(note === 45 ? 145 : 105, now);
+        osc.frequency.exponentialRampToValueAtTime(note === 45 ? 82 : 64, now + 0.22);
+        gain.gain.setValueAtTime(0.72, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.42);
+        osc.connect(gain);
+        gain.connect(output);
+        osc.start(now);
+        osc.stop(now + 0.44);
+        return;
+    }
+
+    const duration = note === 46 || note === 49 || note === 51 ? 0.72 : note === 38 ? 0.24 : 0.12;
+    const source = audio.ctx.createBufferSource();
+    const filter = audio.ctx.createBiquadFilter();
+    const gain = audio.ctx.createGain();
+    source.buffer = makeNoiseBuffer(audio.ctx, duration);
+    filter.type = note === 38 ? "bandpass" : "highpass";
+    filter.frequency.value = note === 38 ? 1850 : note === 49 ? 5200 : 7200;
+    filter.Q.value = note === 38 ? 0.7 : 0.3;
+    gain.gain.setValueAtTime(note === 38 ? 0.72 : 0.38, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(output);
+    source.start(now);
+}
+
+function handlePlaybackNote(payload) {
+    if (!isComputerTestMode()) return;
+    const pitch = Number(payload.pitch);
+    if (!Number.isFinite(pitch)) return;
+
+    const event = payload.event || "note_on";
+    const bus = payload.bus || "ai";
+    if (bus === "drum") {
+        pushVisualNote({ ...payload, source: "drum" });
+        return;
+    }
+
+    pushVisualNote({ ...payload, source: bus === "loop" ? "ai" : bus });
 }
 
 function maybeVisualizeFromLog(message) {
@@ -622,15 +927,6 @@ function normalizeVisualSource(source) {
     return source === "browser-midi" ? "human" : source;
 }
 
-function shouldPlayBackendInputFeedback(source) {
-    const input = String(state.sessionInput || "").toLowerCase();
-    return state.running
-        && source === "human"
-        && input
-        && !input.includes("python_in")
-        && state.webMidi.connectedNames.length === 0;
-}
-
 function pushVisualNote(note) {
     const pitch = Number(note.pitch);
     if (!Number.isFinite(pitch)) return;
@@ -640,16 +936,9 @@ function pushVisualNote(note) {
     const key = visualKey(source, pitch);
 
     if (event === "note_off") {
-        if (shouldPlayBackendInputFeedback(source)) {
-            stopLocalPiano(pitch);
-        }
         state.activeVisualNotes.delete(key);
         markPianoKey(pitch, false);
         return;
-    }
-
-    if (shouldPlayBackendInputFeedback(source)) {
-        playLocalPiano(pitch, Number(note.velocity || state.velocity));
     }
 
     if (state.activeVisualNotes.has(key)) {
@@ -806,17 +1095,18 @@ function drawBackground(w, h) {
         }
     }
 
-    drawLaneLabel("Human Call", 18, top + 34, "#35d4ff");
-    drawLaneLabel("AI Response", 18, mid + 26, "#ff4d63");
+    drawLaneLabel("你的演奏", 18, top + 34, "#35d4ff");
+    drawLaneLabel("AI 回应", 18, mid + 26, "#ff4d63");
 
     if (state.activeVisualNotes.size === 0) {
         ctx.fillStyle = "rgba(244,246,248,0.78)";
         ctx.font = "700 22px Inter, Segoe UI, sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText("Ready for MIDI", w / 2, h / 2 - 4);
+        const phase = ROUND_LABELS[state.round.state] || "等待演奏";
+        ctx.fillText(phase, w / 2, h / 2 - 4);
         ctx.font = "13px Inter, Segoe UI, sans-serif";
         ctx.fillStyle = "rgba(154,163,173,0.9)";
-        ctx.fillText("Use an external keyboard or the virtual keys below", w / 2, h / 2 + 24);
+        ctx.fillText(state.running ? "弹奏一句，然后自然停顿" : "启动 AI 后开始", w / 2, h / 2 + 24);
         ctx.textAlign = "left";
     }
 }
@@ -974,7 +1264,6 @@ function applyKeyboardMode(mode) {
     syncKeyboardWindowState();
     buildKeyboard();
     updateKeyboardRangeDetail();
-    preloadVisibleAutumnSamples();
     resizeKeyboardCanvas();
 }
 
@@ -1048,22 +1337,35 @@ function noteOn(offset, source = "virtual") {
     const pitch = pitchFor(offset);
     if (state.activeKeys.has(pitch)) return;
     state.activeKeys.add(pitch);
-    initAudio();
-    playLocalPiano(pitch, state.velocity);
+    // Melody audio must come from Logic Pro.  A browser-side piano here would
+    // double the selected Logic instrument and make the performer's Call sound
+    // different from the AI response.
     send({ type: "note_on", pitch, velocity: state.velocity });
     pushVisualNote({ pitch, velocity: state.velocity, source: "human", event: "note_on" });
     markPianoKey(pitch, true);
-    $("selected-source").textContent = source === "virtual" ? "Virtual keyboard" : "Computer keyboard";
+    $("selected-source").textContent = source === "virtual" ? "虚拟键盘" : "电脑键盘";
 }
 
 function noteOff(offset) {
     const pitch = pitchFor(offset);
     if (!state.activeKeys.has(pitch)) return;
     state.activeKeys.delete(pitch);
-    stopLocalPiano(pitch);
     send({ type: "note_off", pitch, velocity: 0 });
     pushVisualNote({ pitch, velocity: 0, source: "human", event: "note_off" });
     markPianoKey(pitch, false);
+}
+
+function rhythmTap() {
+    if (!state.running || !state.rhythm.learning) return;
+    const pitch = 37;
+    send({ type: "rhythm_tap", velocity: state.velocity });
+    pushVisualNote({ pitch, velocity: state.velocity, source: "human", event: "note_on" });
+    $("rhythm-tap-btn").classList.add("active");
+    $("selected-source").textContent = "节奏示范";
+    setTimeout(() => {
+        pushVisualNote({ pitch, velocity: 0, source: "human", event: "note_off" });
+        $("rhythm-tap-btn").classList.remove("active");
+    }, 72);
 }
 
 function markPianoKey(pitch, active) {
@@ -1075,11 +1377,17 @@ function markPianoKey(pitch, active) {
 function allNotesOff() {
     Array.from(state.activeKeys).forEach((pitch) => {
         send({ type: "note_off", pitch, velocity: 0 });
-        stopLocalPiano(pitch);
         pushVisualNote({ pitch, velocity: 0, source: "human", event: "note_off" });
     });
     state.activeKeys.clear();
     document.querySelectorAll(".active").forEach((el) => el.classList.remove("active"));
+}
+
+function stopAllLocalAudio() {
+    allNotesOff();
+    for (const voiceKey of Array.from(state.audio.active.keys())) {
+        stopLocalPiano(0, voiceKey);
+    }
 }
 
 function setOctave(v) {
@@ -1087,13 +1395,11 @@ function setOctave(v) {
     state.octave = Math.max(1, Math.min(6, v));
     $("octave-display").textContent = state.octave;
     updateKeyboardRangeDetail();
-    preloadVisibleAutumnSamples();
 }
 
 function setVelocity(v) {
     state.velocity = Math.max(20, Math.min(127, v));
     $("velocity-display").textContent = state.velocity;
-    preloadVisibleAutumnSamples();
 }
 
 function updateKeyboardRangeDetail() {
@@ -1103,85 +1409,47 @@ function updateKeyboardRangeDetail() {
     $("range-detail").textContent = `${midiNoteName(low)} - ${midiNoteName(high)}`;
 }
 
-function playTestNote() {
-    const pitch = 60;
-    playLocalPiano(pitch, 100);
-    pushVisualNote({ pitch, velocity: 100, source: "test", event: "note_on" });
-    setTimeout(() => {
-        stopLocalPiano(pitch);
-        pushVisualNote({ pitch, velocity: 0, source: "test", event: "note_off" });
-    }, 520);
-}
-
-async function initWebMidi() {
-    if (!navigator.requestMIDIAccess) {
-        setStatus(statusWebMidi, "Browser MIDI unavailable", "idle");
-        return;
-    }
-
-    try {
-        const access = await navigator.requestMIDIAccess({ sysex: false });
-        state.webMidi.access = access;
-        attachWebMidiInputs();
-        access.onstatechange = attachWebMidiInputs;
-    } catch (err) {
-        setStatus(statusWebMidi, "Browser MIDI permission needed", "warning");
-    }
-}
-
-function attachWebMidiInputs() {
-    const access = state.webMidi.access;
-    if (!access) return;
-
-    const inputs = Array.from(access.inputs.values()).filter((input) => input.state === "connected");
-    state.webMidi.inputCount = inputs.length;
-    state.webMidi.connectedNames = inputs.map((input) => input.name || "MIDI input");
-
-    for (const input of inputs) {
-        input.onmidimessage = handleBrowserMidiMessage;
-    }
-
-    if (inputs.length > 0) {
-        setStatus(statusWebMidi, `Browser MIDI ${inputs[0].name || "connected"}`, "connected");
-        if (!state.running) $("selected-source").textContent = inputs[0].name || "External MIDI";
-    } else {
-        setStatus(statusWebMidi, "Browser MIDI listening", "idle");
-    }
-}
-
-function handleBrowserMidiMessage(event) {
-    const [status, note, velocity] = event.data;
-    const command = status & 0xf0;
-    const isNoteOn = command === 0x90 && velocity > 0;
-    const isNoteOff = command === 0x80 || (command === 0x90 && velocity === 0);
-
-    if (isNoteOn) {
-        initAudio();
-        playLocalPiano(note, velocity);
-        pushVisualNote({ pitch: note, velocity, source: "browser-midi", event: "note_on" });
-        $("selected-source").textContent = state.webMidi.connectedNames[0] || "External MIDI";
-    } else if (isNoteOff) {
-        stopLocalPiano(note);
-        pushVisualNote({ pitch: note, velocity: 0, source: "browser-midi", event: "note_off" });
-    }
-}
-
 btnStart.onclick = () => {
-    initAudio();
     send({ type: "start_session", input_port: selectMidi.value || state.devices.selected_input });
 };
 btnStop.onclick = () => send({ type: "stop_session" });
+$("panic-btn").onclick = () => {
+    stopAllLocalAudio();
+    send({ type: "panic_all" });
+};
 btnTest.onclick = () => {
-    playTestNote();
     send({ type: "test_output" });
 };
 btnRefresh.onclick = () => {
     send({ type: "refresh_devices" });
-    initWebMidi();
 };
+$("rhythm-tap-btn").onclick = rhythmTap;
+$("rhythm-learn-btn").onclick = () => send({ type: "rhythm_learn_start" });
+$("rhythm-finish-btn").onclick = () => send({ type: "rhythm_learn_finish" });
+$("rhythm-variation-btn").onclick = () => send({ type: "rhythm_variation" });
+$("rhythm-stop-btn").onclick = () => send({ type: "rhythm_stop" });
+$("rhythm-stop-now-btn").onclick = () => send({ type: "rhythm_stop_now" });
+document.querySelectorAll(".rhythm-save").forEach((button) => {
+    button.onclick = () => send({ type: `rhythm_save_${button.dataset.slot.toLowerCase()}` });
+});
+document.querySelectorAll(".rhythm-load").forEach((button) => {
+    button.onclick = () => send({ type: `rhythm_load_${button.dataset.slot.toLowerCase()}` });
+});
+$("loop-save-mode").onchange = (event) => {
+    const mode = event.target.value === "call_response" ? "call_response" : "response";
+    send({ type: `loop_set_mode_${mode}` });
+};
+document.querySelectorAll(".loop-save").forEach((button) => {
+    button.onclick = () => send({ type: `loop_save_${button.dataset.slot.toLowerCase()}` });
+});
+document.querySelectorAll(".loop-toggle").forEach((button) => {
+    button.onclick = () => send({ type: `loop_toggle_${button.dataset.slot.toLowerCase()}` });
+});
+$("loop-stop-all-btn").onclick = () => send({ type: "loop_stop_all" });
 selectMidi.onchange = (e) => {
     state.selectedInput = e.target.value;
-    $("selected-source").textContent = e.target.value || "Virtual keyboard";
+    $("selected-source").textContent = e.target.value || "电脑键盘";
+    $("device-note").textContent = e.target.value ? `已选择：${e.target.value}` : "未选择 MIDI 输入";
 };
 
 $("temperature").addEventListener("input", (e) => {
@@ -1191,7 +1459,7 @@ $("temperature").addEventListener("change", (e) => {
     send({ type: "set_params", params: { temperature: Number(e.target.value) } });
 });
 
-backendSelect.addEventListener("change", (e) => {
+backendSelect?.addEventListener("change", (e) => {
     const selected = MODEL_CONFIG[e.target.value] || MODEL_CONFIG.amt_small;
     $("backend-display").textContent = selected.backend.toUpperCase();
     $("model-note").textContent = state.running
@@ -1201,8 +1469,7 @@ backendSelect.addEventListener("change", (e) => {
         type: "set_params",
         params: {
             backend: selected.backend,
-            model_id: selected.model_id,
-            aria_model_id: selected.aria_model_id
+            model_id: selected.model_id
         }
     });
 });
@@ -1218,6 +1485,11 @@ $("keyboard-expand").onclick = toggleKeyboardExpanded;
 document.addEventListener("keydown", (e) => {
     if (e.repeat || ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
     const key = e.key.toLowerCase();
+    if (e.code === "Space") {
+        e.preventDefault();
+        rhythmTap();
+        return;
+    }
     if (key === "z") return setOctave(state.octave - 1);
     if (key === "x") return setOctave(state.octave + 1);
     if (key === "c") return setVelocity(state.velocity - 10);
@@ -1241,6 +1513,10 @@ syncKeyboardWindowState();
 buildKeyboard();
 updateKeyboardRangeDetail();
 connect();
-initWebMidi();
+setStatus(statusWebMidi, "后台独占 MIDI 输入", "connected");
 draw();
 window.addEventListener("resize", resizeCanvas);
+window.addEventListener("blur", allNotesOff);
+document.addEventListener("visibilitychange", () => {
+    if (document.hidden) allNotesOff();
+});

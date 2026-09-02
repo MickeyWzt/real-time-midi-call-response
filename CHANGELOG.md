@@ -8,6 +8,7 @@
 - Replaced repeated-row inferential outputs with Call-clustered reports and path-verifiable provenance.
 - Removed the unapproved formative-listening aggregates, analysis pipeline, and recruitment interface from the new release; only an ethics notice remains.
 - Added expanded regression checks, safe `--force` output handling, and fully embedded figure fonts.
+- Integrated the optional AMT-first live studio and Logic MIDI FX source while documenting that its adaptive performance features remain outside the paper evidence.
 
 ## 1.1.0 - 2026-08-09
 

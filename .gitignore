@@ -6,6 +6,8 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+.uv-python/
+.python_deps/
 
 # Local runtime state
 hf_cache/
@@ -35,6 +37,9 @@ ratings.csv
 *.exe
 *.dll
 *.vst3
+
+# Native build outputs (the source SDK is tracked as a submodule)
+logic_midi_fx/build/
 
 # Deployment-local config
 online_blind_listening/public/config.js

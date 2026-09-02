@@ -22,6 +22,7 @@ The exact v1.2.0 version DOI is recorded on the GitHub release page after Zenodo
 - Expanded endpoint sensitivity conditions for clustering, confirmation, threshold, window, intensity floor, and cutoff clamps.
 - Runtime revalidation of the 27,000-row structural score under Python 3.12.10 and zlib 1.3.1.
 - Additional regression tests for endpoint first-commit semantics, A4 fallback isolation, and feature-association calculations.
+- Optional AMT-first live-studio, rhythm-guide, Loop Bank, and macOS Logic MIDI FX source, explicitly separated from the paper's fixed evaluation conditions and hardware evidence.
 - Revised 29-page manuscript, figures, README, project page, metadata, and release documentation.
 
 ## Human-evidence boundary
@@ -34,6 +35,8 @@ Future listening or live-performance evaluation must begin only after prospectiv
 
 This release supports an inspectable engineering adaptation, structural manipulation checks, narrow symbolic feature associations, and deterministic scheduler behavior. It does not establish musical quality, universal endpoint accuracy, faster intrinsic AMT decoding, MIDI/audio latency, human-responsive turn taking, or perceptual superiority.
 
+The optional live studio was merged after the fixed experimental runs. It is not part of the endpoint, A0--A6, feature-association, scheduler, human-participant, or latency evidence. Its first-buffered-event state, Call-relative key projection, learned rhythm grid, and partial-tail motif completion are deployment features with automated logic tests, not validated physical-MIDI, DAW-audio, or performer results.
+
 ## Excluded from the archive
 
 - model weights and third-party audio software
@@ -41,5 +44,6 @@ This release supports an inspectable engineering adaptation, structural manipula
 - all human-participant response data and aggregate outcomes
 - private answer keys and deployment credentials
 - piano sample libraries, VST plugins, and DAWs
+- Apple AudioUnit SDK contents (retrieved separately as a pinned third-party submodule under its own license)
 
 Published result tables use path-redacted filenames and SHA-256 values. Recomputing the feature-association analysis from MIDI requires locally regenerated responses; this limitation is stated in the manuscript and metadata.

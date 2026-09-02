@@ -89,6 +89,12 @@ Install or download third-party models, datasets, and audio tools separately acc
 
 ## Quick Start
 
+For a Windows collaborator setup, MIDI routing, model-file boundaries, and the
+shared-branch workflow, see [COLLABORATION_WINDOWS.md](COLLABORATION_WINDOWS.md).
+For the optional macOS/Logic studio, see [MAC_DEMO.md](MAC_DEMO.md). Both live
+studio paths are runtime extensions outside the v1.2.0 paper evidence and still
+require physical MIDI/DAW validation.
+
 Python 3.12 is recommended on Windows.
 
 ```powershell
@@ -170,6 +176,13 @@ python code/analyze_call_response_association.py --help
 python code/test_evaluation_integrity.py
 python code/test_endpoint_benchmark.py
 python code/test_call_response_association.py
+```
+
+To run every discovered regression, including the optional live-studio logic
+tests when their lightweight dependencies are installed:
+
+```powershell
+python -m unittest discover -s code -p 'test_*.py'
 ```
 
 Full regeneration requires third-party model weights and the Call100 MIDI inputs. Generated responses and model caches are excluded from the DOI archive.

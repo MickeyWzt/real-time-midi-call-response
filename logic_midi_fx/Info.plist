@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key><string>en</string>
+	<key>CFBundleExecutable</key><string>MFPNativeMIDIProcessor</string>
+	<key>CFBundleIdentifier</key><string>com.mfp.realtime-midi-call-response.midi-fx</string>
+	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+	<key>CFBundleName</key><string>MFP AI Response MIDI FX</string>
+	<key>CFBundlePackageType</key><string>BNDL</string>
+	<key>CFBundleShortVersionString</key><string>0.2.0</string>
+	<key>CFBundleVersion</key><string>2</string>
+	<key>AudioComponents</key>
+	<array>
+		<dict>
+			<key>name</key><string>MFP: AI Response</string>
+			<key>description</key><string>Real-time MIDI call and response for Logic Pro</string>
+			<key>type</key><string>aumi</string>
+			<key>subtype</key><string>mfpr</string>
+			<key>manufacturer</key><string>mfp1</string>
+			<key>version</key><integer>131072</integer>
+			<key>factoryFunction</key><string>MFPNativeMIDIProcessorFactory</string>
+			<key>sandboxSafe</key><true/>
+		</dict>
+	</array>
+</dict>
+</plist>
