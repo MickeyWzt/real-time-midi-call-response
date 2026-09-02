@@ -2,13 +2,13 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/MickeyWzt/real-time-midi-call-response)](https://github.com/MickeyWzt/real-time-midi-call-response/releases)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20838083.svg)](https://doi.org/10.5281/zenodo.20838083)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22241768.svg)](https://doi.org/10.5281/zenodo.22241768)
 
 Code and supporting materials for the paper **Adapting a Frozen Anticipatory Music Transformer for Turn-Based MIDI Call-and-Response** by Wang Zitong and Hu Sitong.
 
 This repository wraps an offline autoregressive symbolic-music Transformer for live MIDI call-and-response performance. The system listens to a human MIDI phrase, detects a likely phrase endpoint, generates a response with an Anticipatory Music Transformer backend, applies phrase-level musical control, and schedules MIDI playback with latency-aware buffering.
 
-The repository is published through GitHub Pages and archived on Zenodo. GitHub release [v1.2.0](https://github.com/MickeyWzt/real-time-midi-call-response/releases/tag/v1.2.0) identifies this revision; the stable all-versions Zenodo concept DOI is [10.5281/zenodo.20838083](https://doi.org/10.5281/zenodo.20838083). The exact v1.2.0 version DOI is recorded on the GitHub release page after archival.
+The repository is published through GitHub Pages and archived on Zenodo. GitHub release [v1.2.0](https://github.com/MickeyWzt/real-time-midi-call-response/releases/tag/v1.2.0) and immutable DOI [10.5281/zenodo.22241768](https://doi.org/10.5281/zenodo.22241768) identify this revision; the stable all-versions concept DOI is [10.5281/zenodo.20838083](https://doi.org/10.5281/zenodo.20838083).
 
 ## Paper Summary
 
@@ -216,7 +216,7 @@ https://mickeywzt.github.io/real-time-midi-call-response/
 
 ## Citation
 
-Use `CITATION.cff` for GitHub citation metadata. Zenodo release metadata is defined in `.zenodo.json`. The exact immutable v1.2.0 DOI is shown on the release page; the citation below uses the stable all-versions concept DOI.
+Use `CITATION.cff` for GitHub citation metadata. Zenodo release metadata is defined in `.zenodo.json`. The citation below uses the immutable v1.2.0 version DOI.
 
 ```bibtex
 @software{wang_hu_2026_realtime_midi_call_response,
@@ -224,8 +224,8 @@ Use `CITATION.cff` for GitHub citation metadata. Zenodo release metadata is defi
   title = {Adapting a Frozen Anticipatory Music Transformer for Turn-Based MIDI Call-and-Response},
   year = {2026},
   version = {1.2.0},
-  doi = {10.5281/zenodo.20838083},
-  url = {https://doi.org/10.5281/zenodo.20838083}
+  doi = {10.5281/zenodo.22241768},
+  url = {https://doi.org/10.5281/zenodo.22241768}
 }
 ```
 

@@ -2,9 +2,9 @@
 
 Code, paper, and verified summary outputs for **Adapting a Frozen Anticipatory Music Transformer for Turn-Based MIDI Call-and-Response**.
 
-[GitHub repository](https://github.com/MickeyWzt/real-time-midi-call-response) | [Paper PDF](../paper/Real_Time_MIDI_Call_and_Response_Generation_Using_Autoregressive_Transformers.pdf) | [GitHub release v1.2.0](https://github.com/MickeyWzt/real-time-midi-call-response/releases/tag/v1.2.0) | [Zenodo all-versions DOI](https://doi.org/10.5281/zenodo.20838083)
+[GitHub repository](https://github.com/MickeyWzt/real-time-midi-call-response) | [Paper PDF](../paper/Real_Time_MIDI_Call_and_Response_Generation_Using_Autoregressive_Transformers.pdf) | [GitHub release v1.2.0](https://github.com/MickeyWzt/real-time-midi-call-response/releases/tag/v1.2.0) | [Zenodo v1.2.0 DOI](https://doi.org/10.5281/zenodo.22241768)
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20838083.svg)](https://doi.org/10.5281/zenodo.20838083)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22241768.svg)](https://doi.org/10.5281/zenodo.22241768)
 
 ![System overview](../paper/System_overview.png)
 
@@ -39,7 +39,7 @@ Large model weights, generated MIDI responses, participant-level exports, exclus
 
 ## Citation
 
-GitHub release [v1.2.0](https://github.com/MickeyWzt/real-time-midi-call-response/releases/tag/v1.2.0) identifies this revision. The stable all-versions Zenodo concept DOI is [10.5281/zenodo.20838083](https://doi.org/10.5281/zenodo.20838083); the exact v1.2.0 version DOI is recorded on the GitHub release page after archival.
+GitHub release [v1.2.0](https://github.com/MickeyWzt/real-time-midi-call-response/releases/tag/v1.2.0) and immutable DOI [10.5281/zenodo.22241768](https://doi.org/10.5281/zenodo.22241768) identify this revision. The stable all-versions Zenodo concept DOI remains [10.5281/zenodo.20838083](https://doi.org/10.5281/zenodo.20838083).
 
 v1.2.0 citation using the stable all-versions DOI:
 
@@ -49,7 +49,7 @@ v1.2.0 citation using the stable all-versions DOI:
   title = {Adapting a Frozen Anticipatory Music Transformer for Turn-Based MIDI Call-and-Response},
   year = {2026},
   version = {1.2.0},
-  doi = {10.5281/zenodo.20838083},
-  url = {https://doi.org/10.5281/zenodo.20838083}
+  doi = {10.5281/zenodo.22241768},
+  url = {https://doi.org/10.5281/zenodo.22241768}
 }
 ```

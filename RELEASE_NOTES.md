@@ -4,7 +4,9 @@ Evidence-semantics and reproducibility release for **Adapting a Frozen Anticipat
 
 All-versions Zenodo concept DOI: https://doi.org/10.5281/zenodo.20838083
 
-The exact v1.2.0 version DOI is recorded on the GitHub release page after Zenodo archival. The prior v1.1.0 DOI is `10.5281/zenodo.21860065` and must not be used to identify this revision.
+Immutable v1.2.0 version DOI: https://doi.org/10.5281/zenodo.22241768
+
+The prior v1.1.0 DOI is `10.5281/zenodo.21860065` and must not be used to identify this revision.
 
 ## Major corrections
 

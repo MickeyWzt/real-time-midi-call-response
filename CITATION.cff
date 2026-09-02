@@ -8,6 +8,7 @@ authors:
   - family-names: Hu
     given-names: Sitong
 version: 1.2.0
+doi: 10.5281/zenodo.22241768
 date-released: 2026-09-02
 license: MIT
 repository-code: "https://github.com/MickeyWzt/real-time-midi-call-response"
