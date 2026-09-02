@@ -1,0 +1,4 @@
+comparison,descriptive_paired_rows,independent_calls,source_clusters,mean_difference,call_cluster_ci95_low,call_cluster_ci95_high,positive_call_fraction,source_cluster_mean_difference,source_cluster_ci95_low,source_cluster_ci95_high,leave_one_source_out_min,leave_one_source_out_max
+controlled_minus_raw,9000,100,87,0.171642,0.157901,0.185151,1.000000,0.173270,0.158728,0.187555,0.169830,0.176999
+controlled_minus_motif,9000,100,87,-0.020072,-0.031425,-0.008749,0.400000,-0.020741,-0.032944,-0.008721,-0.021559,-0.018421
+motif_minus_raw,9000,100,87,0.191714,0.174714,0.208189,0.960000,0.194012,0.176257,0.211206,0.189684,0.198000

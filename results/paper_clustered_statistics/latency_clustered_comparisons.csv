@@ -1,0 +1,3 @@
+comparison,descriptive_paired_rows,independent_calls,source_clusters,mean_difference,call_cluster_ci95_low,call_cluster_ci95_high,positive_call_fraction,source_cluster_mean_difference,source_cluster_ci95_low,source_cluster_ci95_high,leave_one_source_out_min,leave_one_source_out_max
+preload_readiness_lower_bound_reduction_ms,9000,100,87,14.998662,10.151631,20.493798,0.980000,11.973273,7.934640,16.870849,10.563852,15.284348
+startup_deadline_miss_rate_reduction,9000,100,87,0.155000,0.124889,0.189000,0.970000,0.147454,0.118966,0.180055,0.146465,0.157710

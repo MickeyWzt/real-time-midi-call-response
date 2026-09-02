@@ -12,7 +12,8 @@ import argparse
 import csv
 import hashlib
 import json
-import math
+import platform
+import zlib
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -78,6 +79,16 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def provenance_label(path: Path) -> str:
+    """Return a portable provenance label without exposing host directories."""
+
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(ROOT.resolve()).as_posix()
+    except ValueError:
+        return resolved.name
 
 
 def fnum(value: object, default: float = 0.0) -> float:
@@ -160,13 +171,6 @@ def rescore(rows: Sequence[Dict[str, str]], args: argparse.Namespace, max_rows: 
     return output, audit
 
 
-def sem_ci(values: Sequence[float]) -> Tuple[float, float, float, float]:
-    center = mean(values)
-    sd = stdev(values) if len(values) > 1 else 0.0
-    half = 1.96 * sd / math.sqrt(len(values)) if values else 0.0
-    return center, sd, center - half, center + half
-
-
 def summarize(rows: Sequence[Dict[str, object]], keys: Sequence[str]) -> List[Dict[str, object]]:
     groups: Dict[Tuple[object, ...], List[Dict[str, object]]] = defaultdict(list)
     for row in rows:
@@ -175,34 +179,19 @@ def summarize(rows: Sequence[Dict[str, object]], keys: Sequence[str]) -> List[Di
     for group_key, items in groups.items():
         result: Dict[str, object] = {key: value for key, value in zip(keys, group_key)}
         result["sample_count"] = len(items)
+        result["inference_scope"] = "descriptive repeated rows; use results/paper_clustered_statistics for uncertainty"
         for field in ["objective_score", "style_compliance_score", "non_style_structural_score"]:
             values = [fnum(item.get(field)) for item in items]
-            center, sd, low, high = sem_ci(values)
+            center = mean(values)
+            sd = stdev(values) if len(values) > 1 else 0.0
             result[f"mean_{field}"] = f"{center:.6f}"
             result[f"sd_{field}"] = f"{sd:.6f}"
-            result[f"ci95_low_{field}"] = f"{low:.6f}"
-            result[f"ci95_high_{field}"] = f"{high:.6f}"
         output.append(result)
     output.sort(key=lambda item: (str(item.get("candidate", "")), str(item.get("preset", ""))))
     return output
 
 
-def bootstrap_ci(differences: np.ndarray, iterations: int, seed: int) -> Tuple[float, float]:
-    import numpy as np
-
-    rng = np.random.default_rng(seed)
-    means: List[np.ndarray] = []
-    remaining = iterations
-    while remaining:
-        count = min(250, remaining)
-        indices = rng.integers(0, len(differences), size=(count, len(differences)))
-        means.append(differences[indices].mean(axis=1))
-        remaining -= count
-    samples = np.concatenate(means)
-    return float(np.quantile(samples, 0.025)), float(np.quantile(samples, 0.975))
-
-
-def paired_tests(rows: Sequence[Dict[str, object]], iterations: int) -> List[Dict[str, object]]:
+def paired_row_descriptives(rows: Sequence[Dict[str, object]]) -> List[Dict[str, object]]:
     import numpy as np
 
     buckets: Dict[Tuple[str, str, int], Dict[str, float]] = defaultdict(dict)
@@ -215,43 +204,25 @@ def paired_tests(rows: Sequence[Dict[str, object]], iterations: int) -> List[Dic
         ("motif_minus_raw", "motif_transform_baseline", "amt_small_raw"),
     ]
     output: List[Dict[str, object]] = []
-    try:
-        from scipy.stats import ttest_1samp
-    except ImportError:
-        ttest_1samp = None
-    for index, (label, left, right) in enumerate(comparisons):
+    for label, left, right in comparisons:
         diffs = np.array(
             [values[left] - values[right] for values in buckets.values() if left in values and right in values],
             dtype=float,
         )
-        low, high = bootstrap_ci(diffs, iterations, 20260809 + index)
         center = float(diffs.mean())
         sd = float(diffs.std(ddof=1))
-        if ttest_1samp is not None:
-            test_result = ttest_1samp(diffs, popmean=0.0)
-            test_statistic = float(test_result.statistic)
-            p_value = float(test_result.pvalue)
-        else:
-            z = abs(center / (sd / math.sqrt(len(diffs)))) if sd else math.inf
-            test_statistic = center / (sd / math.sqrt(len(diffs))) if sd else math.inf
-            p_value = math.erfc(z / math.sqrt(2.0))
-        p_report = "<1e-6" if p_value < 1e-6 else f"{p_value:.6e}"
         output.append(
             {
                 "comparison": label,
                 "candidate_a": left,
                 "candidate_b": right,
-                "paired_sample_count": len(diffs),
+                "paired_row_count": len(diffs),
                 "mean_difference": f"{center:.6f}",
-                "ci95_low_bootstrap": f"{low:.6f}",
-                "ci95_high_bootstrap": f"{high:.6f}",
-                "cohen_dz": f"{center / sd:.6f}" if sd else "inf",
-                "positive_pairs": int(np.sum(diffs > 0)),
-                "negative_pairs": int(np.sum(diffs < 0)),
-                "tied_pairs": int(np.sum(diffs == 0)),
-                "paired_t_statistic": f"{test_statistic:.6f}",
-                "p_two_sided_paired_t": f"{p_value:.6e}",
-                "p_report": p_report,
+                "sd_difference": f"{sd:.6f}",
+                "positive_rows": int(np.sum(diffs > 0)),
+                "negative_rows": int(np.sum(diffs < 0)),
+                "tied_rows": int(np.sum(diffs == 0)),
+                "inference_scope": "descriptive repeated rows; use results/paper_clustered_statistics/candidate_clustered_comparisons.csv",
             }
         )
     return output
@@ -280,16 +251,18 @@ def write_report(output_dir: Path, summary: Sequence[Dict[str, object]], tests: 
     lines.extend(
         [
             "",
-            "## Paired Comparisons",
+            "## Descriptive Paired Rows",
             "",
-            "| comparison | n | mean difference | bootstrap 95% CI | paired t p |",
-            "| --- | ---: | ---: | ---: | ---: |",
+            "The 9,000 repeated rows per candidate are not independent musical inputs. This section reports descriptive row summaries only. Canonical uncertainty is in `results/paper_clustered_statistics/` after averaging within 100 Calls, with an 87-source sensitivity analysis.",
+            "",
+            "| comparison | rows | mean difference | SD across rows |",
+            "| --- | ---: | ---: | ---: |",
         ]
     )
     for row in tests:
         lines.append(
-            f"| {row['comparison']} | {row['paired_sample_count']} | {row['mean_difference']} | "
-            f"[{row['ci95_low_bootstrap']}, {row['ci95_high_bootstrap']}] | {row['p_report']} |"
+            f"| {row['comparison']} | {row['paired_row_count']} | {row['mean_difference']} | "
+            f"{row['sd_difference']} |"
         )
     (output_dir / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -299,7 +272,7 @@ def main() -> None:
     parser.add_argument("--ablation-results", type=Path, default=DEFAULT_ABLATION)
     parser.add_argument("--legacy-results", type=Path, default=DEFAULT_LEGACY)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--bootstrap-iterations", type=int, default=5000)
+    parser.add_argument("--bootstrap-iterations", type=int, default=5000, help=argparse.SUPPRESS)
     parser.add_argument("--max-rows", type=int, default=None)
     args = parser.parse_args()
 
@@ -316,7 +289,7 @@ def main() -> None:
     write_csv(output_dir / "all_harmonized_results.csv", rescored)
     summary = summarize(rescored, ["candidate"])
     preset_summary = summarize(rescored, ["preset", "candidate"])
-    tests = paired_tests(rescored, args.bootstrap_iterations) if args.max_rows is None else []
+    tests = paired_row_descriptives(rescored) if args.max_rows is None else []
     write_csv(output_dir / "summary_by_candidate.csv", summary)
     write_csv(output_dir / "summary_by_preset_candidate.csv", preset_summary)
     write_csv(output_dir / "paired_comparisons.csv", tests)
@@ -324,11 +297,16 @@ def main() -> None:
     (output_dir / "score_spec.json").write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
     provenance = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "ablation_results": str(args.ablation_results),
+        "runtime": {
+            "python_version": platform.python_version(),
+            "zlib_compile_version": zlib.ZLIB_VERSION,
+            "zlib_runtime_version": zlib.ZLIB_RUNTIME_VERSION,
+        },
+        "ablation_results": provenance_label(args.ablation_results),
         "ablation_results_sha256": sha256(args.ablation_results),
-        "legacy_results": str(args.legacy_results),
+        "legacy_results": provenance_label(args.legacy_results),
         "legacy_results_sha256": sha256(args.legacy_results),
-        "evaluator": str(Path(metrics.__file__).resolve()),
+        "evaluator": provenance_label(Path(metrics.__file__)),
         "evaluator_sha256": sha256(Path(metrics.__file__).resolve()),
         "candidate_sources": {
             "amt_small_raw": "A0_raw_amt",

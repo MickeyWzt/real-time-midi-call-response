@@ -3,7 +3,7 @@
   "created_at": "2026-06-18T11:43:04+00:00",
   "selection_note": "expected_public_additions records the original per-source target if that source was locally available; unavailable sources contributed zero and POP909 backfilled all 50 additions in the frozen Call100 benchmark.",
   "num_calls": 100,
-  "manifest_sha1": "39eadf81bcc58865d583fd683466a269e4088bc0",
+  "manifest_sha1": "2c70dd29b4f2811d17ba7b006e60227885499a12",
   "source_datasets": {
     "ASAP": {
       "total_count": 0,

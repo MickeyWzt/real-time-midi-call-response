@@ -1,0 +1,60 @@
+{
+  "analysis": "call_response_feature_association_v4_source_exclusion_sensitivity",
+  "created_at_utc": "2026-09-02T02:35:13+00:00",
+  "inference": {
+    "aggregation": "rebuild block-level association statistics in all six presets and 15 trials, then average valid statistics within each Call",
+    "call_ci": "classical leave-one-Call-out jackknife standard error and point_estimate +/- 1.96*SE; deletion rebuilds all retained mismatch banks",
+    "candidate_contrasts": "paired Call/source deletions with both candidate mismatch banks rebuilt in every replicate; a Call is retained only when both candidate within-Call excesses are defined; source contrast uses equal-weight retained source means",
+    "resampling": "none; deterministic delete-one jackknife",
+    "source_ci": "classical leave-one-source-cluster-out jackknife standard error and equal-source point_estimate +/- 1.96*SE; deletion rebuilds all retained mismatch banks",
+    "source_estimate": "equal-weight source mean: average valid Calls within each retained source, then average retained source means equally"
+  },
+  "input_hashes": {
+    "call100_manifest_public.csv": "4117c304d1a5e00c1bb0979d9831410e969f5f1aef7863deec46a4f0581a649c",
+    "harmonized_trial_metrics.csv": "a6af03f6629535ddd317f680f3d0f74edcbaeb9766469aa9ae95af00e64d813e"
+  },
+  "metrics": {
+    "claim_boundary": "non-subjective symbolic feature association only; not musical quality",
+    "contour_interpolation": "linear interpolation at equally spaced event-index positions; mean-centered and L2-normalized; fewer than 3 clusters or centered norm <= 1e-12 is NA",
+    "contour_points": 16,
+    "interval_clip_semitones": [
+      -12,
+      12
+    ],
+    "interval_ngram_size": 2,
+    "interval_rounding_and_dice": "Python ties-to-even round of median-pitch differences, then clipping; multiset Dice is 2*sum(min counts)/(total counts); fewer than 3 clusters is NA",
+    "onset_cluster_rule": "start-anchored inclusive window; even cluster median is the arithmetic mean of the two middle pitches",
+    "onset_cluster_window_seconds": 0.08,
+    "onset_profile_bins": 16,
+    "onset_profile_rule": "min(15, floor(16*(t-t0)/(tlast-t0))); L2-normalized counts; fewer than 2 clusters or onset span <= 1e-12 is NA",
+    "short_phrase_policy": "NA with coverage reported"
+  },
+  "midi_pairing": {
+    "calls": 100,
+    "harmonized_rows": 27000,
+    "mapping": "answer-key call_id/trial/seed/candidate validation; response SHA-256 verified against harmonized metrics",
+    "path_redaction": "published CSVs contain MIDI filenames and SHA-256 values only",
+    "response_rows_per_candidate": 9000,
+    "source_clusters": 87
+  },
+  "same_condition_mismatch_null": {
+    "association_excess": "actual_similarity - mean_valid_mismatched_similarity",
+    "block": [
+      "preset",
+      "candidate",
+      "trial"
+    ],
+    "block_calls": 100,
+    "nominal_alternative_responses_per_observed_pair": 99,
+    "valid_alternative_denominator": "dynamic count of available off-diagonal feature similarities; written per trial row"
+  },
+  "same_source_exclusion_sensitivity": {
+    "comparison": "controlled_minus_raw",
+    "inference": "rebuild all masked mismatch banks for the point estimate and every paired delete-one Call/source jackknife replicate",
+    "interpretation": "all three controlled-minus-raw directions and interval conclusions are unchanged",
+    "ordered_same_source_offdiagonal_cells_per_100_call_block": 40,
+    "output": "source_excluded_mismatch_sensitivity.csv",
+    "rule": "retain the matched diagonal; exclude an off-diagonal response when its source cluster equals the focal Call source cluster",
+    "source_cluster_definition": "77 POP909 song IDs plus 10 artificial Calls"
+  }
+}

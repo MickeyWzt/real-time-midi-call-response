@@ -16,7 +16,7 @@ Example:
     python code/transformer_call_response_once.py --offline
 
 If the model cache is incomplete, run without --offline once to let
-HuggingFace finish downloading the weights into D:\\Mickey\\MFP\\hf_cache.
+HuggingFace finish downloading the weights into the project's ``hf_cache`` directory.
 """
 
 from __future__ import annotations

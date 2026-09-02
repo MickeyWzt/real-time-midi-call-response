@@ -75,19 +75,19 @@ const MODEL_CONFIG = {
     amt_small: {
         backend: "amt",
         model_id: "stanford-crfm/music-small-800k",
-        aria_model_id: "D:\\Mickey\\MFP\\model_weights\\aria-medium-gen",
+        aria_model_id: "model_weights/aria-medium-gen",
         label: "AMT Small / stanford-crfm/music-small-800k"
     },
     amt_medium: {
         backend: "amt",
         model_id: "stanford-crfm/music-medium-800k",
-        aria_model_id: "D:\\Mickey\\MFP\\model_weights\\aria-medium-gen",
+        aria_model_id: "model_weights/aria-medium-gen",
         label: "AMT Medium / stanford-crfm/music-medium-800k"
     },
     aria: {
         backend: "aria",
         model_id: "stanford-crfm/music-small-800k",
-        aria_model_id: "D:\\Mickey\\MFP\\model_weights\\aria-medium-gen",
+        aria_model_id: "model_weights/aria-medium-gen",
         label: "ARIA / local aria-medium-gen"
     }
 };

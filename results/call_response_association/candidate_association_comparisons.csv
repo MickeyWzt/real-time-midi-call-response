@@ -1,0 +1,10 @@
+metric,comparison,call_count,mean_difference,source_cluster_mean_difference,positive_calls,source_cluster_count,mean_difference_call_jackknife_replicates,mean_difference_call_jackknife_se,mean_difference_call_jackknife_ci95_low,mean_difference_call_jackknife_ci95_high,mean_difference_call_leave_one_out_min,mean_difference_call_leave_one_out_max,mean_difference_source_jackknife_replicates,mean_difference_source_jackknife_se,mean_difference_source_jackknife_ci95_low,mean_difference_source_jackknife_ci95_high,mean_difference_source_leave_one_out_min,mean_difference_source_leave_one_out_max
+contour_r,controlled_minus_raw,100,-0.028970,-0.032176,46,87,100,0.018001,-0.064251,0.006311,-0.033409,-0.022761,87,0.017329,-0.066140,0.001789,-0.037255,-0.025838
+contour_r,controlled_minus_motif,100,0.604119,0.596332,99,87,100,0.029501,0.546297,0.661941,0.595797,0.610876,87,0.030090,0.537356,0.655309,0.587248,0.604125
+contour_r,motif_minus_raw,100,-0.633089,-0.628508,1,87,100,0.024481,-0.681071,-0.585107,-0.639371,-0.625896,87,0.025498,-0.678485,-0.578531,-0.635778,-0.620715
+interval_2gram_dice,controlled_minus_raw,100,-0.096715,-0.104344,10,87,100,0.008440,-0.113257,-0.080172,-0.097957,-0.094194,87,0.009013,-0.122009,-0.086678,-0.105844,-0.101501
+interval_2gram_dice,controlled_minus_motif,100,0.027041,0.030615,72,87,100,0.005975,0.015330,0.038753,0.024956,0.029082,87,0.006568,0.017742,0.043488,0.028257,0.033031
+interval_2gram_dice,motif_minus_raw,100,-0.123756,-0.134958,11,87,100,0.011033,-0.145381,-0.102131,-0.126259,-0.121186,87,0.012050,-0.158577,-0.111340,-0.137983,-0.132108
+onset_profile_cosine,controlled_minus_raw,100,0.020016,0.020158,66,87,100,0.006678,0.006927,0.033105,0.017860,0.021218,87,0.007161,0.006123,0.034193,0.015805,0.021419
+onset_profile_cosine,controlled_minus_motif,100,-0.123044,-0.124314,15,87,100,0.013462,-0.149430,-0.096658,-0.125628,-0.119248,87,0.014698,-0.153121,-0.095507,-0.127358,-0.120111
+onset_profile_cosine,motif_minus_raw,100,0.143060,0.144472,84,87,100,0.013753,0.116104,0.170016,0.138987,0.146176,87,0.015354,0.114379,0.174565,0.139049,0.148113

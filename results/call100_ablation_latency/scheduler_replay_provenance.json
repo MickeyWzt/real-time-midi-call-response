@@ -1,0 +1,25 @@
+{
+  "formula": "s=max(B,C1-H)",
+  "canonical_quantity": "commit-to-first-generated-event readiness lower bound",
+  "source_timing_semantics": "elapsed inference time until the first complete GeneratedEvent was yielded",
+  "not_measured": [
+    "queue send time",
+    "operating-system MIDI send/receive time",
+    "host or DAW receive time",
+    "audio onset"
+  ],
+  "legacy_aliases": {
+    "first_token_latency_ms": "first_generated_event_latency_ms",
+    "t_first_token_ready_ms": "t_first_generated_event_ready_ms",
+    "endpoint_to_first_midi_ms": "commit_to_first_event_readiness_lower_bound_ms; not measured MIDI output",
+    "t_first_midi_queued_ms": "commit_to_first_event_readiness_lower_bound_ms; modeled alias, not a queue timestamp",
+    "t_first_midi_out_ms": "commit_to_first_event_readiness_lower_bound_ms; modeled alias, not a transmitted MIDI timestamp",
+    "t_response_end_ms": "modeled_response_end_lower_bound_ms; modeled alias, not an observed response-end timestamp"
+  },
+  "startup_target_ms": 80.0,
+  "preload_window_ms": 150.0,
+  "input_file": "latency_log_all_trials.csv",
+  "input_sha256_before_recompute": "d4f736c7e467f80c4cc7f677521f0bd137191704746237318aac77584af0a337",
+  "row_count": 18000,
+  "inference": "deterministic scheduler replay; no hypothesis test"
+}

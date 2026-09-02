@@ -1,34 +1,45 @@
-# v1.1.0
+# v1.2.0
 
-Integrity and evidence-chain release for **Real-Time MIDI Call-and-Response Generation Using Autoregressive Transformers**.
+Evidence-semantics and reproducibility release for **Adapting a Frozen Anticipatory Music Transformer for Turn-Based MIDI Call-and-Response**.
 
-Zenodo version DOI: https://doi.org/10.5281/zenodo.21860065
-All-versions concept DOI: https://doi.org/10.5281/zenodo.20838083
+All-versions Zenodo concept DOI: https://doi.org/10.5281/zenodo.20838083
 
-## Corrections
+The exact v1.2.0 version DOI is recorded on the GitHub release page after Zenodo archival. The prior v1.1.0 DOI is `10.5281/zenodo.21860065` and must not be used to identify this revision.
 
-- Corrects the v1.0.0 candidate condition labeled `amt_small_raw`. That path had applied style projection and was not comparable with ablation A0.
-- Replaces the old candidate claim (`0.683141` raw and `+0.063907` controlled-minus-raw) with a harmonized shared-batch evaluation: raw `0.560968`, controlled `0.732610`, motif `0.752682`, and controlled-minus-raw `+0.171642` with 95% CI `[0.168923, 0.174287]`.
-- Separates event-level repair from phrase-level motif fallback. A4 motif fallback activated `0/9000` times because A3 produced no empty outputs; all A3/A4 MIDI pairs are byte-identical.
-- Defines the versioned structural-compliance score, all six component formulas, weights, normalizations, and style/non-style decomposition.
-- Uses `p<10^-6` when floating-point p-values underflow instead of reporting `p=0`.
-- Aligns the speculative-preload overlap with the endpoint confirmation interval at `150 ms`; no `250 ms` post-confirmation horizon is claimed.
+## Major corrections
 
-## New Evidence
+- Replaces post-hoc endpoint scoring with a first-commit replay that terminates after the deployed state machine's first Commit.
+- Defines the custom premature-sensitive first-commit score (PS-F1): `TP=success`, `FP=premature`, and `FN=premature+late+missed`; it is not conventional event-detection F1.
+- Reinterprets the legacy `first_token_latency` field as time to the first complete generated event and reports a commit-to-first-generated-event readiness lower bound, not MIDI transmission or audio-onset latency.
+- Prevents the A4 motif-fallback path from silently applying A5/A6 style or theory controls.
+- Replaces trial-row inference with 100-Call bootstrap inference and an 87-source-cluster sensitivity analysis for candidate, ablation, and scheduler results.
+- Records both the original endpoint input-manifest hash and the published path-redacted manifest hash so the provenance chain can be verified without exposing local paths.
 
-- 27,000-row harmonized candidate-level trial metrics with hashes and path-redacted provenance.
-- Direct 100-call endpoint benchmark with adaptive, fixed 300/500/800 ms, clustering, and confirmation-window conditions.
-- Fallback activation, A3/A4 paired identity, score decomposition, and legacy-label integrity audits.
-- Privacy-preserving blind-listening aggregate outputs for 44 complete submissions and 41 retained participants, plus the frozen analysis script and source hashes.
-- Revised manuscript with seven figures, a claim/evidence hierarchy, explicit limitations, hardware environment, and corrected terminology.
+## New evidence and tooling
 
-## Claim Boundary
+- 27,000-row matched-versus-mismatched symbolic feature-association audit with bank-rebuilding Call/source jackknife analyses.
+- Cluster-aware candidate, stepwise-ablation, and scheduler-replay reports with fixed seeds and input hashes.
+- Expanded endpoint sensitivity conditions for clustering, confirmation, threshold, window, intensity floor, and cutoff clamps.
+- Runtime revalidation of the 27,000-row structural score under Python 3.12.10 and zlib 1.3.1.
+- Additional regression tests for endpoint first-commit semantics, A4 fallback isolation, and feature-association calculations.
+- Revised 29-page manuscript, figures, README, project page, metadata, and release documentation.
 
-The release supports an external engineering adaptation, measurable structural control, and scheduler-level responsiveness. It does not establish universal endpoint accuracy, faster intrinsic AMT decoding, or perceptual superiority.
+## Human-evidence boundary
 
-## Excluded
+No human-participant data or aggregate outcomes are included as evidence in v1.2.0. The earlier formative listening exercise lacked prospective institutional approval or exemption and did not enforce adult eligibility. Its aggregate output files have been removed from this release; historical v1.1.0 artifacts remain only in that immutable prior tag and must not be interpreted as an ethically governed human-subject result.
+
+Future listening or live-performance evaluation must begin only after prospective institutional review or a documented determination that review is not required, with age eligibility, consent, withdrawal, retention, and de-identification procedures fixed before recruitment.
+
+## Claim boundary
+
+This release supports an inspectable engineering adaptation, structural manipulation checks, narrow symbolic feature associations, and deterministic scheduler behavior. It does not establish musical quality, universal endpoint accuracy, faster intrinsic AMT decoding, MIDI/audio latency, human-responsive turn taking, or perceptual superiority.
+
+## Excluded from the archive
 
 - model weights and third-party audio software
-- generated MIDI response batches and license-sensitive source datasets
-- participant-level response exports and exclusion identifiers
-- private blind-study answer keys and deployment credentials
+- license-sensitive source datasets and generated MIDI response batches
+- all human-participant response data and aggregate outcomes
+- private answer keys and deployment credentials
+- piano sample libraries, VST plugins, and DAWs
+
+Published result tables use path-redacted filenames and SHA-256 values. Recomputing the feature-association analysis from MIDI requires locally regenerated responses; this limitation is stated in the manuscript and metadata.

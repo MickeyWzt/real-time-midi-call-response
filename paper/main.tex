@@ -12,33 +12,33 @@
 \usepackage[hidelinks]{hyperref}
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 \hypersetup{
-  pdftitle={Real-Time MIDI Call-and-Response Generation Using Autoregressive Transformers},
+  pdftitle={Adapting a Frozen Anticipatory Music Transformer for Turn-Based MIDI Call-and-Response},
   pdfauthor={Wang Zitong, Hu Sitong},
-  pdfkeywords={symbolic music generation, MIDI, call-and-response, Transformer, temporal point process, real-time interaction, objective evaluation, blind listening, ablation study, latency logging, speculative preload}
+  pdfkeywords={symbolic music generation, MIDI, call-and-response, Transformer, endpoint detection, turn-based interaction, objective evaluation, clustered inference, speculative preload}
 }
 
-\title{Real-Time MIDI Call-and-Response Generation Using Autoregressive Transformers}
+\title{Adapting a Frozen Anticipatory Music Transformer\\for Turn-Based MIDI Call-and-Response}
 \author{Wang Zitong, Hu Sitong}
-\date{August 2026}
+\date{September 2026}
 
 \begin{document}
 
 \maketitle
 
 \begin{abstract}
-This paper tests whether an offline Anticipatory Music Transformer (AMT) can support real-time MIDI call-and-response without retraining. The primary contribution is an external adaptation architecture combining adaptive MIDI-VAD, phrase control, asynchronous playback, and speculative scheduling. A direct 100-call endpoint replay, a harmonized 27,000-row candidate comparison, a 63,000-row module ablation, an 18,000-row scheduler replay, and a blind study provide separate evidence. Under a fully specified structural-compliance composite, controlled AMT improves over shared-batch raw AMT from 0.560968 to 0.732610; style compliance accounts for much of the late-stage gain, while non-style structure rises from 0.558971 to 0.676704. Adaptive MIDI-VAD attains F1=0.712 at the stated two-second deadline, similar to fixed 800 ms (0.708) but with fewer premature commits (38 versus 68). A 150 ms pre-commit overlap reduces mean scheduler latency from 161.303 to 91.721 ms and underruns from 20.744\% to 5.244\%. Among 41 retained listeners, A4 is not rated conclusively above raw AMT, and the motif baseline is preferred to A6. The evidence supports an engineering adaptation and measurable structural control, not perceptual superiority or universally accurate turn segmentation.
+This paper evaluates an external deployment layer for adapting a frozen Anticipatory Music Transformer (AMT) checkpoint to turn-based MIDI call-and-response without retraining. The layer combines an onset-density endpoint heuristic, phrase controls, asynchronous playback, and speculative scheduling. Evidence comprises a first-commit replay on 100 Calls, repeated candidate and module runs, a matched-versus-mismatched symbolic feature audit, and a deterministic scheduler replay. The 27,000 and 63,000 trial rows are descriptive; candidate, module, association, and scheduler uncertainty is computed at 100 Call units with an 87-source-cluster sensitivity analysis, whereas endpoint intervals use the 100 Calls only. Controlled AMT raises the structural-compliance composite fixed for the final analysis from 0.560968 to 0.732610 relative to raw AMT (Call-cluster 95\% CI for the difference [0.157901, 0.185151]), while the motif baseline remains higher at 0.752682. Feature association is not uniformly improved: relative to raw AMT, the controlled-minus-raw onset-profile association contrast is +0.020016 (Call-jackknife 95\% CI [0.006927, 0.033105]), whereas the interval-2gram contrast is -0.096715 [-0.113257, -0.080172]; equal-source analyses preserve both directions. Using final Note-Off as a reproducible but non-human boundary proxy, the primary adaptive detector attains a custom premature-sensitive first-commit score (PS-F1) of 0.619 [0.523, 0.711] at a two-second deadline, compared with 0.500 [0.400, 0.590] for a fixed 800 ms threshold; overlapping uncertainty and sensitivity to the heuristic survival-timer threshold preclude a universal-optimum claim. With an 80 ms commit-relative target, a 150 ms pre-commit overlap reduces the modeled first-generated-event readiness lower bound from 101.543 to 86.545 ms (Call-cluster reduction 14.999 ms [10.152, 20.494]) and readiness-target misses from 20.744\% to 5.244\%. The replay does not observe MIDI transmission or audio onset. No human-participant data are analyzed or reported, and no live co-performance study or human phrase-boundary annotation is included. The evidence supports an inspectable engineering adaptation and narrow structural manipulation/association checks, not musical quality, human-responsive turn taking, or perceptual superiority.
 \end{abstract}
 
 
-\noindent\textbf{Keywords:} symbolic music generation; MIDI; call-and-response; Transformer; temporal point process; real-time interaction; objective evaluation; blind listening; ablation study; latency logging; speculative preload
+\noindent\textbf{Keywords:} symbolic music generation; MIDI; call-and-response; Transformer; endpoint detection; turn-based interaction; objective evaluation; clustered inference; speculative preload
 
 \section{Introduction}
 \label{sec:introduction}
-Call-and-response is a foundational pattern in live improvisation, but realizing it computationally requires symbolic generators that can react on a performance clock rather than only complete offline continuations.
+Call-and-response is a foundational pattern in live improvisation. A computational system must not only generate a plausible continuation; it must decide when the Call has ended, return events on a performance clock, and recover safely from unusable output.
 
-Autoregressive Transformers capture rich symbolic-music structure in offline generation, yet their stepwise decoding is poorly matched to live co-performance. Direct deployment creates four linked bottlenecks: synchronization with human timing, reliable phrase-end detection, latency spikes during inference, and structural degradation in high-entropy continuations. This paper therefore asks whether these limits can be reduced through external architecture and control layers without retraining the underlying model.
+AMT already supports controlled anticipation and infilling \citep{thickstun2023amt}; the deployment question examined here is narrower. A frozen checkpoint does not by itself define turn boundaries, cancellation semantics, MIDI scheduling, or application-specific phrase constraints. The implemented wrapper addresses these engineering requirements, but the present experiments replay files rather than observe musicians interacting with the system.
 
-The \textbf{primary contribution} is the external system method: adaptive turn detection, phrase control, and speculative scheduling make a frozen offline AMT operable in a live MIDI loop. The stopping-time formulation is its turn-taking basis, while the endpoint benchmark, harmonized structural evaluation, module ablation, latency replay, and blind study are supporting tests with deliberately separate claim boundaries.
+Three research questions organize the evidence: \textbf{RQ1}, how does the endpoint heuristic trade premature commits against delay under a reproducible file-end proxy? \textbf{RQ2}, how do cumulative external controls change a declared output-compliance score and narrow Call--response feature associations relative to raw AMT and a motif baseline? \textbf{RQ3}, how much can speculative preload reduce a modeled first-generated-event readiness lower bound in deterministic replay? The contribution is the inspectable adaptation architecture and its claim-separated evaluation. Human boundary validity, live co-performance usefulness, and perceptual response quality remain future tests.
 
 
 \section{Related Work}
@@ -49,21 +49,21 @@ This section reviews the four areas that shape the proposed system: symbolic mus
 \subsection{Symbolic Music Representation}
 
 
-Early symbolic music generation often used piano-rolls or fixed time-step grids, but rigid quantization can create sparse matrices and discard micro-timing such as rubato and swing \citep{boulanger2012modeling}. Event-based representations address this limitation through MIDI-like streams with \verb|Note-On|, \verb|Note-Off|, and relative \verb|Time-Shift| events \citep{oore2020feeling,huang2018musictransformer}. The Anticipatory Music Transformer further models symbolic music with temporal point-process events and asynchronous controls \citep{thickstun2023amt}. However, representation-level advances alone do not specify how continuous MIDI input should be segmented into interactive turns, especially when chords, hesitation pauses, and rubato-like timing occur in live performance.
+Early symbolic music generation often used piano-rolls or fixed time-step grids, but rigid quantization can create sparse matrices and discard micro-timing such as rubato and swing \citep{boulanger2012modeling}. Event streams offer an alternative \citep{oore2020feeling,huang2018musictransformer}. AMT represents notes with quantized arrival time, duration, and instrument--pitch tokens and supports asynchronous control events \citep{thickstun2023amt}. Section~\ref{sec:relative-interval-nucleus-sampling} reports the exact checkpoint and adapter mapping used here; it is not a relative pitch-interval representation.
 
 \subsection{Sequence Models for Music Generation}
 
-Symbolic music generation has moved from memoryless or recurrent models such as LSTMs \citep{eck2002finding} to self-attention-based Transformer architectures \citep{vaswani2017attention,huang2018musictransformer}. AMT extends this line toward controllable temporal-event generation \citep{thickstun2023amt}, but it remains primarily an offline model. Live co-performance adds endpoint detection, turn scheduling, and latency stability as deployment constraints. These models therefore do not directly address phrase-end detection or scheduler-level latency, which become necessary when offline symbolic generation is embedded into live interaction.
+Symbolic music generation has moved from memoryless or recurrent models such as LSTMs \citep{eck2002finding} to self-attention-based Transformer architectures \citep{vaswani2017attention,huang2018musictransformer}. AMT extends this line toward controllable temporal-event generation and anticipation \citep{thickstun2023amt}. Accordingly, the novelty claimed here is not that AMT is converted from a purely offline model into an interactive one. It is the turn-taking, cancellation, phrase-control, and scheduling layer around one pretrained AMT checkpoint.
 
 \subsection{Real-Time Human-AI Co-Performance}
 
-Real-time human-AI co-performance systems must handle input capture, turn-taking, latency, and synchronization in addition to generation quality. MIDI-performance research emphasizes timing stability in interactive systems \citep{nelson2004midi}; Scramble Live illustrates the combination of learned models and live control in Max/MSP-style environments \citep{privato2022scramble}; and recent work couples Max/MSP front ends with Python generative back ends \citep{karchkhadze2026towards}. These systems show the importance of live control surfaces, but they leave open how an offline autoregressive symbolic model can be wrapped with endpoint logic, buffering, and fallback behavior without retraining. This study addresses that deployment gap through virtual MIDI routing and multithreaded asynchronous scheduling.
+Real-time human--computer improvisation has a substantial pre-Transformer history. The Continuator learns style during interaction and produces stylistically related continuations \citep{pachet2003continuator}; OMax uses learned sequence structure for improvisation \citep{assayag2006omax}; ImproteK introduces scenario-guided improvisation \citep{nika2016improtek}; and Somax2 frames machine listening, memory, and generation as cocreative interaction \citep{assayag2022somax2}. MIDI-performance research emphasizes timing stability \citep{nelson2004midi}; Scramble Live combines learned models and live control \citep{privato2022scramble}; and recent work couples Max/MSP front ends with Python generative back ends \citep{karchkhadze2026towards}. Relative to these systems, the present work focuses on a reproducible wrapper for a frozen arrival-time Transformer: revocable endpoint candidates, explicit control modules, a queue-based scheduler, and a first-event readiness lower-bound replay. It does not establish superior musical interaction.
 
 \subsection{Evaluation of Generative Music}
 
-While human listening tests remain vital for evaluating musical quality, they are expensive and difficult to scale. Prior surveys emphasize that objective metrics for symbolic and generative music are useful for reproducible structural analysis, but they cannot fully replace perceptual or human-centered evaluation \citep{ji2023survey,lerch2025evaluation}. For real-time call-and-response, evaluation must also separate structural response quality from runtime behavior such as endpoint-to-first-MIDI latency and buffer underrun. The present evaluation therefore treats objective metrics, ablation evidence, scheduler logs, and a fixed-stimulus blind listening study as complementary rather than interchangeable forms of evidence.
+While human listening tests remain vital for evaluating musical quality, objective metrics are useful for reproducible structural analysis but cannot replace perceptual or human-centered evaluation \citep{ji2023survey,lerch2025evaluation}. For call-and-response, output-only rule compliance, conditional correspondence to the Call, phrase-boundary validity, scheduler timing, and live performer experience are different constructs. The present evaluation measures the first, three narrow symbolic feature associations for the second, and engineering proxies for the third and fourth. It contains no harmonic-fit, human-perceived correspondence, governed listening, or live-user evaluation.
 
-\section{Temporal Point Process Modeling and Autoregressive Generation}
+\section{Point-Process-Inspired Timing Heuristic and Autoregressive Generation}
 \label{sec:temporal-modeling}
 
 \subsection{Continuous-Time MIDI Event Representation}
@@ -87,22 +87,25 @@ P(e_j^r\mid\cdot)=P(t_j^r\mid\cdot)
 P(d_j^r\mid t_j^r,\cdot)
 P(p_j^r\mid t_j^r,d_j^r,\cdot).
 \end{equation}
-The causal model supplies continuation probabilities; endpoint detection, scheduling, and phrase controls remain external and do not retrain its parameters.
+This event-level factorization is conceptual: the implementation decodes the checkpoint's interleaved token triplets rather than fitting three separate probability models. Endpoint detection, scheduling, and phrase controls remain external and do not retrain its parameters.
 
 \subsection{Dynamic Turn Segmentation Based on Continuous-Time Stopping Time}
 
-Let $T_{\mathrm{last}}$ be the most recent Note-On and $\tau=t-T_{\mathrm{last}}$ the current silence. Under a point-process model with intensity $\lambda(t)$, the no-arrival probability is \citep{daley2003pointprocesses}
+Let $T_{\mathrm{last}}$ be the most recent Note-On and $\tau=t-T_{\mathrm{last}}$ the current silence. A point-process survival expression motivates the monotone mapping from recent onset density to a waiting time \citep{daley2003pointprocesses}:
 \begin{equation}
 S(\tau)=\exp\left[-\int_0^{\tau}\lambda(T_{\mathrm{last}}+u)\,du\right].
 \end{equation}
-For the short online window, the implementation uses a local constant-rate approximation. If $u_1,\ldots,u_K$ are the most recent clustered onset times,
+For the short online window, the implementation uses a local constant-rate approximation. If $u_1,\ldots,u_{K_{\mathrm{on}}}$ are up to the eight most recent clustered onset times and $\mu_{\min}=0.25\,\mathrm{s}^{-1}$,
 \begin{equation}
 \mu_{\mathrm{tempo}}=
-\max\left(0.25,\frac{K-1}{u_K-u_1}\right),
+\begin{cases}
+\mu_{\min}, & K_{\mathrm{on}}<2\ \text{or}\ u_{K_{\mathrm{on}}}\leq u_1,\\
+\max\left(\mu_{\min},\dfrac{K_{\mathrm{on}}-1}{u_{K_{\mathrm{on}}}-u_1}\right), & \text{otherwise},
+\end{cases}
 \qquad
 S(\tau)=\exp(-\mu_{\mathrm{tempo}}\tau).
 \end{equation}
-With confidence boundary $\theta=0.05$, the candidate cutoff and stopping condition are
+With heuristic survival-timer threshold $\theta=0.05$, the candidate cutoff and stopping condition are
 \begin{equation}
 \tau_{\mathrm{cutoff}}=\frac{\ln(1/\theta)}{\mu_{\mathrm{tempo}}},
 \label{eq:dynamic-cutoff}
@@ -111,7 +114,7 @@ With confidence boundary $\theta=0.05$, the candidate cutoff and stopping condit
 t-T_{\mathrm{last}}>\tau_{\mathrm{cutoff}}.
 \label{eq:endpoint-condition}
 \end{equation}
-Thus the silence allowance shortens as recent onset density rises. This is an adaptive timer, not a proof of musical phrase completion; chord correction, revocable confirmation, and the direct endpoint benchmark in Section~\ref{subsec:endpoint-benchmark} define and test its operational behavior.
+Thus the silence allowance shortens as recent onset density rises. The primary setting uses no lower or upper cutoff clamp; at the floor intensity, $\tau_{\mathrm{cutoff}}=\ln(20)/0.25\approx11.98$ s. Section~\ref{subsec:endpoint-benchmark} therefore includes 2 s and 4 s upper-clamp sensitivities. The implementation does not fit a point-process likelihood, estimate a calibrated hazard, or infer musical syntax. The equations define a point-process-inspired engineering timer, not a stochastic generative model or proof of phrase completion. Chord correction, revocable confirmation, and the proxy benchmark define its operational behavior.
 
 
 \section{Real-Time MIDI Call-and-Response System Design}
@@ -203,46 +206,57 @@ A Note-On within this interval cancels the candidate; otherwise it commits. The 
 \subsection{Asynchronous Streaming Decoding and Micro-Buffered Scheduling}
 \label{sec:streaming-decoding}
 
-An inference thread places playable events in a thread-safe queue while a playback thread converts them to MIDI. Playback begins after an 80 ms micro-buffer. For generated event duration $D(y_k)$ and per-event inference time $\tau_{\mathrm{infer}}(k)$, an underrun is avoided while
+An inference thread places playable events in a thread-safe queue while a playback thread converts them to MIDI. The scheduler uses an 80 ms startup target anchored to endpoint commit. Let $a_j$ be the scheduled onset of generated event $j$, let $C_j=\sum_{k=1}^{j}\tau_{\mathrm{infer}}(k)$ be the time at which that event becomes ready relative to inference start, let $H$ be the elapsed preload horizon before endpoint commit, and let $B=80$ ms be the commit-relative target. Playback starts, relative to commit, at
 \begin{equation}
-\Delta T_{\mathrm{buffer}}
-+
-\sum_{k=1}^{j} D(y_k)
->
-\sum_{k=1}^{j+1} \tau_{\mathrm{infer}}(k),
-\quad
-\forall j \in \{1,2,\ldots,n-1\}.
+s=\max(B,C_1-H).
+\label{eq:commit-anchored-start}
+\end{equation}
+The event-readiness condition is
+\begin{equation}
+C_j-H \leq s+(a_j-a_1),
+\qquad \forall j\in\{1,\ldots,n\}.
 \label{eq:streaming-buffer-condition}
 \end{equation}
-This overlap changes scheduling, not intrinsic AMT inference time.
+Unlike the previous duration-sum expression, Equation~\eqref{eq:streaming-buffer-condition} compares decoder readiness with scheduled onset deadlines. Note durations do not accumulate playback availability; Note-Off messages are scheduled independently. The released replay stores the elapsed time until the generator first yields a \texttt{GeneratedEvent} (under the legacy field name \path{first_token_latency_sec}) and total-generation time, but not every $C_j$. It therefore estimates only a first-event readiness lower bound and cannot estimate MIDI-send time, audio onset, or full-stream underrun.
 
 \subsubsection{Speculative Preload for Candidate Endpoints}
 \label{sec:speculative-preload}
 
 At candidate time, the engine snapshots the Call and may start decoding while MIDI monitoring continues. A commit reuses available tokens; a cancel discards them. The scheduler model used in Section~\ref{subsec:latency-logging} is
 \begin{equation}
-L_{\mathrm{first}}
+R_{\mathrm{first}}(H)
 =
 \max\left(
-0,\,
-\tau_{\mathrm{first}}-\Delta T_{\mathrm{confirm}}
-\right)
-+\Delta T_{\mathrm{buffer}}.
+B,\,
+\tau_{\mathrm{first}}-H
+\right).
 \label{eq:perceived-latency-preload}
 \end{equation}
-Here $\tau_{\mathrm{first}}$ is time to the first playable token. Because $\Delta T_{\mathrm{preload}}=\Delta T_{\mathrm{confirm}}=150$ ms, no 250 ms post-confirmation horizon exists: preload occupies only the revocable candidate interval. Canceled candidates trade temporary computation for lower committed-path delay.
+Here $\tau_{\mathrm{first}}$ is elapsed inference time until the first generated event object is yielded, $B=80$ ms, and $H\in\{0,150\}$ ms is pre-commit overlap. Without preload, $R_{\mathrm{first}}(0)=\max(B,\tau_{\mathrm{first}})$. Because $\Delta T_{\mathrm{preload}}=\Delta T_{\mathrm{confirm}}=150$ ms, no 250 ms post-confirmation horizon exists: preload occupies only the revocable candidate interval. Canceled candidates trade temporary computation for a lower modeled readiness bound. Phrase-level duration/style processing, queueing, operating-system MIDI transmission, host rendering, and audio onset occur later and are not timed by this replay.
 
-\subsection{Relative Interval Representation and Nucleus Sampling Control in a High-Entropy Setting}
+\subsection{Frozen AMT Checkpoint, Arrival-Time Encoding, and Sampling}
 \label{sec:relative-interval-nucleus-sampling}
 
-The decoder receives relative timing and pitch movement,
+The evaluated model is the frozen \texttt{stanford-crfm/music-small-800k} checkpoint: the 128M-parameter small AMT trained for 800,000 steps on arrival-time-encoded Lakh MIDI \citep{stanfordcrfm2023musicsmall,thickstun2023amt}. The resolved local revision is \path{fa800530aa1126dd6b58b38f3bdb8fcec9c9d4f5}; its configuration has 12 layers, 12 attention heads, hidden size 768, a 1,024-token context, and vocabulary size 55,028.
+
+Each captured note is converted to three integer-valued fields,
 \begin{equation}
-\Delta t_i=t_i-t_{i-1},\qquad \Delta p_i=p_i-p_{i-1},
+\left(
+q_i^{t},q_i^{d},q_i^{n}
+\right)
+=
+\left(
+\operatorname{round}(100t_i),
+\max[1,\operatorname{round}(100d_i)],
+128\,\iota_i+p_i
+\right),
 \label{eq:relative-arrival-time}
 \end{equation}
-and applies temperature-scaled nucleus sampling \citep{holtzman2020curious}. For sorted token probabilities $P_T(x_{(i)})$, it retains the smallest prefix satisfying
+where $\iota_i$ is the instrument index (fixed to zero for captured Calls). Vocabulary offsets convert the fields into arrival-time, duration, and instrument--pitch tokens, after which AMT's event sorter orders the stream. Velocity is not encoded by this adapter; generated events use the playback default 92. Generation prepends the \texttt{AUTOREGRESS} control, retains at most 339 events (1,017 event tokens), and re-bases arrival times only when that history window is truncated. Pitch remains absolute, so the earlier description in terms of $\Delta p$ was incorrect.
+
+The decoder applies temperature-scaled nucleus sampling \citep{holtzman2020curious}. For sorted token probabilities $P_T(x_{(i)})$, it retains the smallest prefix satisfying
 \begin{equation}
-K =
+K_{\mathrm{nuc}} =
 \min \left\{
 k
 \ \middle|\
@@ -302,7 +316,7 @@ which fixes target duration/note count, allowed register, continuous-repetition 
 \subsubsection{Repetition-tail Compression and Repetition Suppression}
 \label{sec:repetition-tail-suppression}
 
-A repeated Call tail (at least three same-pitch events or dominance in the final window) is compressed to at most two prompt events. During decoding, a token is rejected if it would exceed either $CPR_{\mathrm{limit}}$ consecutive equal pitches or dominant-pitch share $Share_{\max}$. Rejection is retried up to $K_{\mathrm{resample}}$ times; exhaustion invokes a nearby consonant event-level repair around $\bar p_{\mathrm{call}}$. This repair is distinct from the whole-phrase motif fallback below.
+A repeated Call tail is flagged either by a final run of at least four equal pitches or by one pitch occurring at least four times and occupying at least 70\% of the notes whose onsets fall in the final 1.5 s. From the first flagged occurrence onward, prompt cleaning retains at most two occurrences of the flagged pitch while preserving every other note and the original order. During decoding, a token is rejected if it would exceed either $CPR_{\mathrm{limit}}$ consecutive equal pitches or dominant-pitch share $Share_{\max}$. Rejection is retried up to $K_{\mathrm{resample}}$ times; exhaustion invokes a nearby consonant event-level repair around $\bar p_{\mathrm{call}}$. This repair is distinct from the whole-phrase motif fallback below.
 
 \subsubsection{Motif-transformation Fallback and Duration Matching}
 \label{sec:fallback-duration-matching}
@@ -341,7 +355,7 @@ d_{\max}
 \right),
 \label{eq:fallback-time-rule}
 \end{equation}
-where $T_{\mathrm{end}}(C)$ is the end time of the Call, $t_{\mathrm{tail},0}$ is the first onset in the selected tail, and
+where $T_{\mathrm{end}}(C)$ is the end time of the Call, $t_{\mathrm{tail},0}$ is the first onset in the selected tail, and $\epsilon=0.001$ s,
 \begin{equation}
 \lambda =
 \max\left(0.2,\frac{T_{\mathrm{target}}}
@@ -360,31 +374,38 @@ p_{\max}^{\mathrm{allow}}
 \right).
 \label{eq:fallback-pitch-rule}
 \end{equation}
-For live fallback, $\delta=-5$ semitones for descending Calls and $+5$ otherwise. Durations are clipped to configured minima/maxima; rejected fallback events pass through the same repetition repair before acceptance. The offline motif baseline, also used by the A4 branch if it is ever activated, selects the tail under the fixed experiment seed, uses $\delta\in\{-5,-3,2,3,5,7\}$, applies the same pitch-share safeguards, re-sorts by onset, and finally applies the chosen style projection. Section~\ref{subsec:controlled-amt-ablation} reports activation separately from event repairs.
+For live fallback, $\delta=-5$ semitones for descending Calls and $+5$ otherwise. Durations are clipped to configured minima/maxima; rejected fallback events pass through the same repetition repair before acceptance. The standalone offline motif baseline selects the tail under the fixed experiment seed, uses $\delta\in\{-5,-3,2,3,5,7\}$, applies the same pitch-share safeguards, re-sorts by onset, and then applies the experiment's selected style projection. In the A0--A6 ablation, a fallback inherits only the modules enabled by its variant: A4 remains chromatic/free, A5 applies the base style projection, and A6 additionally applies theory refinements. Section~\ref{subsec:controlled-amt-ablation} reports activation separately from event repairs.
 
 \noindent\textbf{(2) Response duration matching.}
-Before rendering, duration matching computes
+The reported AMT adapter uses $R=100$ ticks/s. It first sorts generated events lexicographically by onset tick, pitch, and duration. With duration ticks clipped to $[4,250]$ (0.04--2.5 s), it computes
 \begin{equation}
-T_{\mathrm{raw}} = \max_i(t_i^r+d_i^r)-\min_i t_i^r.
+T_{\mathrm{raw}} = \frac{\max_i\{t_i^r+\operatorname{clip}(d_i^r,4,250)\}-\min_i t_i^r}{R}.
 \label{eq:raw-response-duration}
 \end{equation}
+The plan sets $T_{\mathrm{target}}=\operatorname{clip}(T_{\mathrm{call}},2.0,4.8)$ s and $N_{\mathrm{target}}=\operatorname{clip}(\operatorname{round}N_{\mathrm{call}},4,64)$. During decoding, $T_{\mathrm{target}}$ is the generation horizon and $N_{\mathrm{target}}$ is an accepted-event cap; whichever condition terminates generation first determines the retained count. No post-hoc note insertion or deletion is performed. Thus ``note-count matching'' means Call-derived stopping/capping, not forcing exactly $N_{\mathrm{target}}$ notes.
+
+If $T_{\mathrm{raw}}\in[0.80T_{\mathrm{target}},1.25T_{\mathrm{target}}]$, onsets are unchanged and only duration clipping is applied. For a shorter response, define the first onset $t_0=\min_i t_i^r$, raw onset span $S_{\mathrm{raw}}=\max_i t_i^r-t_0$, integer target span
 \begin{equation}
-\gamma =
-\frac{T_{\mathrm{target}}}{T_{\mathrm{raw}}}.
-\label{eq:duration-match-ratio}
+S_{\mathrm{target}}=\max\left\{1,\operatorname{round}\left[R\max(T_{\mathrm{target}}-d_{\min},d_{\min})\right]\right\},
 \end{equation}
-If $T_{\mathrm{raw}}\in[0.80T_{\mathrm{target}},1.25T_{\mathrm{target}}]$, only duration bounds are enforced. Longer responses use bounded proportional scaling. Shorter responses mix normalized original onset position $q_i$ with sequence position $i/(n-1)$:
+and normalized onset position
 \begin{equation}
-q_i'=(1-\beta)q_i+\beta\frac{i}{n-1},
-\qquad
-\beta=\operatorname{clip}\left(0.35+0.45\left(1-\frac{S_{\mathrm{raw}}}{S_{\mathrm{target}}}\right),0.35,0.80\right),
+q_i=\frac{t_i^r-t_0}{\max(1,S_{\mathrm{raw}})}.
+\end{equation}
+The short-response branch defines
+\begin{align}
+\eta &= 1-\min\left(1,\frac{S_{\mathrm{raw}}}{\max(1,S_{\mathrm{target}})}\right),\\
+\beta &= \operatorname{clip}(0.35+0.45\eta,0.35,0.80),\\
+q_i' &= (1-\beta)q_i+\beta\frac{i}{\max(1,n-1)},
 \label{eq:actual-onset-time}
-\end{equation}
-\begin{equation}
-d_i'=\operatorname{clip}\left(d_i\min\left(2,\frac{T_{\mathrm{target}}}{T_{\mathrm{raw}}}\right),d_{\min},d_{\max}\right).
+\end{align}
+With $\alpha_s=\min\{2,T_{\mathrm{target}}/\max(T_{\mathrm{raw}},0.001)\}$, it then sets
+\begin{align}
+t_i' &= t_0+\operatorname{round}(q_i'S_{\mathrm{target}}),\\
+d_i' &= \operatorname{clip}\left(\operatorname{round}(\alpha_s d_i^r),4,250\right).
 \label{eq:actual-duration}
-\end{equation}
-Here $S$ denotes onset span. Raw duration, adjusted duration, and stretch factor are logged for ablation analysis.
+\end{align}
+For $T_{\mathrm{raw}}>1.25T_{\mathrm{target}}$, both $(t_i^r-t_0)$ and $d_i^r$ are instead multiplied by $T_{\mathrm{target}}/\max(T_{\mathrm{raw}},0.001)$, rounded, and duration-clipped to the same bounds. All integer conversions use Python's nearest-integer, ties-to-even \texttt{round}; events are re-sorted by onset, pitch, and duration, so onset ties are deterministic. For $n=1$, $i/\max(1,n-1)=0$ and the note keeps the first-onset anchor. Raw duration, adjusted duration, and realized stretch factor are logged for ablation analysis.
 
 \subsection{Chromatic Free Improvisation and Optional Style Constraint Layer}
 
@@ -396,21 +417,21 @@ This default retains nucleus sampling and phrase safety controls but applies no 
 
 \subsubsection{Engineering Implementation of the pentatonic\_2bar\_4\_4 Style Constraint Layer}
 
-The constrained mode applies five deterministic stages: (i) truncate to eight beats in 4/4; (ii) project pitch to
+The base style projection used by A5 starts at the Call-end tick $t_0$ and applies three deterministic stages: (i) truncate to the following eight beats in 4/4; (ii) project pitch to
 \begin{equation}
 P_{\mathrm{pent}}=\{p\in\mathbb Z:(p\bmod 12)\in M_{\mathrm{mode}}\},
 \qquad p_i'=\Pi_{P_{\mathrm{pent}}}(p_i);
 \end{equation}
-(iii) quantize onset and duration to the selected grid,
+(iii) quantize the Call-end-relative onset to the selected grid while clipping durations to the configured bounds,
 \begin{equation}
-t_i'=\Delta t_{\mathrm{grid}}\operatorname{round}(t_i/\Delta t_{\mathrm{grid}});
+t_i'=t_0+\max\!\left\{1,\Delta t_{\mathrm{grid}}\operatorname{round}\!\left(\frac{\max\{1,t_i-t_0\}}{\Delta t_{\mathrm{grid}}}\right)\right\}.
 \end{equation}
-(iv) move unstable notes on beats one and three toward stable degrees; and (v) correct the final cadence and fold or replace any interval exceeding $\Delta p_{\max}$. These same targeted rules motivate separating style compliance from non-style structure in the evaluator.
+A6 adds three theory refinements after this base projection, in implementation order: (iv) replace projected pitches when feasible to respect the configured maximum melodic leap; (v) move notes on beats one and three toward stable degrees (major degrees 1, 3, and 5; minor degrees 1, $\flat3$, and 5); and (vi) replace or append the final cadence toward the configured root or fifth. Strong-beat remapping and cadence run after leap limiting and are not passed through it again, so they have explicit priority over the earlier leap constraint. Equal-distance nearest-pitch choices take the lower MIDI pitch, and grid quantization uses Python's ties-to-even rounding. A5 explicitly disables all three refinements. Because the evaluator's tonal family includes cadence and strong-beat terms targeted only by A6, the family is reported as \emph{constraint-target score}, not ``A5 compliance.''
 
-\section{Experimental Design, Objective Evaluation, and Blind Listening}
+\section{Experimental Design and Objective Evaluation}
 \label{sec:call100-evaluation}
 
-The evaluation follows five claim-specific layers: endpoint segmentation, candidate comparison, module attribution, scheduler replay, and fixed-stimulus listening. No layer is treated as a substitute for another.
+The evaluation follows five claim-specific layers: endpoint segmentation, output-compliance comparison, Call--response feature association, module attribution, and scheduler replay. No layer is treated as a substitute for another.
 
 \subsection{Experiment Hierarchy and Evaluation Goals}
 \label{subsec:eval-goals}
@@ -425,36 +446,34 @@ The evaluation is organized to avoid a single-score interpretation of the system
     claim/.style={draw, rounded corners=2pt, align=center, text width=0.82\linewidth, inner sep=3.5pt, font=\small\bfseries, fill=gray!10},
     arrow/.style={-{Latex[length=2.4mm]}, line width=0.45pt}
 ]
-\node[claim] (main) {Research question\\Can offline AMT support real-time MIDI call-and-response?};
+\node[claim] (main) {Research question\\What does an external deployment layer add to a frozen AMT checkpoint?};
 \node[evidence, below=of main] (layer0) {Endpoint evidence\\100 Call100 replays: adaptive MIDI-VAD, fixed thresholds, and timing ablations.};
-\node[evidence, below=of layer0] (layer1) {Candidate evidence\\27,000 harmonized rows: raw AMT, controlled AMT, and motif baseline.};
+\node[evidence, below=of layer0] (layer1) {Candidate evidence\\27,000 harmonized rows: output compliance and matched--mismatched feature association.};
 \node[evidence, below=of layer1] (layer2) {Module evidence\\63,000 rows: A0 raw AMT to A6 full controlled AMT.};
-\node[evidence, below=of layer2] (layer3) {Scheduler evidence\\18,000 rows: preload off vs. preload on.};
-\node[evidence, below=of layer3] (layer4) {Perceptual evidence\\44 complete submissions; 41 retained participants; eight fixed stimuli.};
-\node[claim, below=of layer4] (supported) {Claim boundary\\operable adaptation, endpoint trade-off, structural control, and scheduler response;\\no demonstrated perceptual superiority.};
+\node[evidence, below=of layer2] (layer3) {Scheduler evidence\\18,000 deterministic replay rows: preload off vs. preload on.};
+\node[claim, below=of layer3] (supported) {Claim boundary\\file-replay endpoint trade-off, output-compliance manipulation, narrow feature association, and first-event scheduling;\\no human-boundary, live-performance, or perceptual evidence.};
 \draw[arrow] (main) -- (layer0);
 \draw[arrow] (layer0) -- (layer1);
 \draw[arrow] (layer1) -- (layer2);
 \draw[arrow] (layer2) -- (layer3);
-\draw[arrow] (layer3) -- (layer4);
-\draw[arrow] (layer4) -- (supported);
+\draw[arrow] (layer3) -- (supported);
 \end{tikzpicture}
 \caption{Experiment hierarchy and evidence chain.}
 \label{fig:evidence-chain}
 \end{figure}
 
-Endpoint replay tests turn segmentation directly; the remaining layers test structural control, module attribution, scheduler behavior, and listener preference in that order. The primary system claim therefore does not depend on interpreting the structural composite as perceived musical quality.
+Endpoint replay tests a machine-defined proxy for turn segmentation; the remaining layers test output compliance, symbolic feature association, module attribution, and scheduler behavior. None establishes perceived musical quality or live interaction quality.
 
 \subsection{Construction of the Call100 Benchmark}
 \label{subsec:call100-dataset}
 
-Call100 contains 100 call phrases and extends early demonstrations into a mixed-distribution robustness test. It is built in two stages. First, it reuses Call50 without modifying its files: 10 artificial stress-test calls and 40 real public MIDI fragments. The artificial calls deliberately probe likely failure modes, including clear motifs, minor-pentatonic questions, blues or chromatic tension, half cadences, repeated tails, syncopation, sparse long tones, dense eighth-note motion, arch contours, and large leaps followed by stepwise filling.
+Call100 contains 100 call phrases and extends early demonstrations into a mixed-distribution development benchmark. It is not a held-out test set: the wrapper rules and reporting choices were iterated with access to this benchmark, and the experiments were not preregistered. First, it reuses Call50 without modifying its files: 10 artificial stress-test calls and 40 real public MIDI fragments. The artificial calls deliberately probe likely failure modes, including clear motifs, minor-pentatonic questions, blues or chromatic tension, half cadences, repeated tails, syncopation, sparse long tones, dense eighth-note motion, arch contours, and large leaps followed by stepwise filling.
 
 The 40 real calls in Call50 are extracted from POP909 \citep{wang2020pop909} using a conservative two-bar melody-sampling procedure. The extraction script scans MIDI tracks with melody-like names such as \texttt{melody}, \texttt{main}, \texttt{vocal}, and \texttt{lead}, while excluding tracks that are more likely to represent accompaniment or percussion, such as \texttt{chord}, \texttt{bass}, and \texttt{drum}. Candidate windows are two bars long, corresponding to 8 beats, and the window advances by 2 beats. A candidate is kept only if it contains between 6 and 24 notes, has a polyphonic-overlap ratio no greater than 0.10, and reaches a major/minor scale-fit score of at least 0.85. A fixed random seed, 20260529, is then used to shuffle the candidates and select 40 real snippets reproducibly.
 
 Second, Call100 copies Call50 into a new benchmark directory and adds 50 public MIDI excerpts without rewriting the original \texttt{calls\_50} directory. In the reproducible run reported here, the available public source was POP909, so all additions come from POP909. The builder constructs two-bar windows from tracks such as \texttt{MELODY}, \texttt{BRIDGE}, and \texttt{PIANO}, computes descriptive features, scores candidates against eight diagnostic target categories, and applies fingerprint deduplication.
 
-Table~\ref{tab:call100-dataset} summarizes the source distribution, Call50 origins, and public-addition targets. The benchmark is diagnostic rather than corpus-representative: it preserves artificial stress cases while adding public excerpts for broader melodic input. Planned MAESTRO, ASAP, Lakh/Slakh, and GiantMIDI sources were not locally available, so the dataset report records their absence and the public additions are backfilled from POP909.
+Table~\ref{tab:call100-dataset} summarizes the source distribution, Call50 origins, and public-addition targets. The benchmark is diagnostic rather than corpus-representative: it preserves artificial stress cases while adding public excerpts for broader melodic input. Planned MAESTRO, ASAP, Lakh/Slakh, and GiantMIDI sources were not locally available, so the dataset report records their absence and the public additions are backfilled from POP909. The 90 non-artificial Calls trace to 77 unique POP909 song IDs; repeated excerpts from the same song motivate the source-cluster sensitivity analysis in Section~\ref{subsec:statistical-units}. No Call is transposed to the response target key. Only 36 of the 100 manifest rows are labeled C major; accordingly, the fixed C-major response target is a deliberately narrow output contract rather than Call-relative harmonic adaptation.
 
 \begin{table}[htbp]
 \centering
@@ -497,7 +516,7 @@ The formal experiment compares three candidate strategies, summarized in Table~\
 Candidate ID & Description \\
 \midrule
 \texttt{amt\_small\_raw} & Raw AMT response generation without external phrase-level control. \\
-\texttt{amt\_small\_controlled} & AMT response generation with call profiling, repetition suppression, fallback generation, and duration matching. \\
+\texttt{amt\_small\_controlled} & AMT response generation with call profiling, repetition suppression, duration matching, fallback capability, style projection, and full-theory controls. \\
 \texttt{motif\_transform\_baseline} & Rule-based motif transformation baseline used as a strong non-neural comparison. \\
 \bottomrule
 \end{tabular}
@@ -512,19 +531,44 @@ The experiment uses six parameter presets, listed in Table~\ref{tab:parameter-pr
 
 \begin{table}[htbp]
 \centering
-\caption{Parameter presets used in the Call100 experiment}
+\caption{Sampling and theory parameters for the six Call100 presets}
 \label{tab:parameter-presets}
-\small
-\begin{tabular}{ll}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{L{0.31\linewidth}rrrrL{0.12\linewidth}}
 \toprule
-Preset group & Preset ID \\
+Preset ID & $T$ & top-$p$ & Max leap & Strong beat & Cadence \\
 \midrule
-No-theory control & \texttt{pentatonic\_no\_theory} \\
-Balanced setting & \texttt{pentatonic\_balanced} \\
-Conservative setting & \texttt{pentatonic\_conservative} \\
-Creative setting & \texttt{pentatonic\_creative} \\
-Wide creative setting & \texttt{pentatonic\_creative\_wide} \\
-Low-temperature setting & \texttt{pentatonic\_low\_temp\_no\_strongbeat} \\
+\texttt{pentatonic\_no\_theory} & 0.90 & 0.98 & 0 & on & root \\
+\texttt{pentatonic\_balanced} & 0.85 & 0.95 & 7 & on & root \\
+\texttt{pentatonic\_conservative} & 0.75 & 0.90 & 5 & on & root \\
+\texttt{pentatonic\_creative} & 1.00 & 0.98 & 9 & on & root \\
+\texttt{pentatonic\_creative\_wide} & 1.10 & 0.99 & 12 & on & root \\
+\texttt{pentatonic\_low\_temp\_no\_strongbeat} & 0.75 & 0.92 & 7 & off & root \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The A0--A6 variant switch is authoritative for module activation. Thus A5 disables cadence, strong-beat correction, and leap limiting for every preset, whereas A6 enables theory processing and uses the values in Table~\ref{tab:parameter-presets}. The legacy name \texttt{pentatonic\_no\_theory} records its original search configuration; in formal A6 it still has a zero leap limit (disabled), but its root cadence and default strong-beat setting are active. This precedence prevents a preset name from silently changing the ablation definition.
+
+\begin{table}[htbp]
+\centering
+\caption{Global control, endpoint, and scheduler parameters in the reported runs}
+\label{tab:global-parameters}
+\scriptsize
+\begin{tabular}{L{0.29\linewidth}L{0.63\linewidth}}
+\toprule
+Component & Fixed setting or boundary rule \\
+\midrule
+Styled response & 100 BPM; two bars; 4/4; 1/16-note grid; 4.8 s window; C-major pentatonic rooted at MIDI 60, degrees \{0,2,4,7,9\}. \\
+Response targets & $T_{\mathrm{target}}=\operatorname{clip}(T_{\mathrm{call}},2.0,4.8)$ s; $N_{\mathrm{target}}=\operatorname{clip}(\operatorname{round}N_{\mathrm{call}},4,64)$. \\
+Register and durations & Allowed register $[p_{\min}^{\mathrm{call}}-12,p_{\max}^{\mathrm{call}}+12]$ clipped to MIDI [36,96]; note duration clipped to [0.04,2.5] s; duration-match acceptance band [0.80,1.25] of target. \\
+Repetition control & At most 2 consecutive equal pitches; dominant-pitch share at most 0.35; 8 resampling attempts. \\
+Prompt cleaning/fallback & Final run $\geq4$, or final 1.5 s pitch count $\geq4$ with share $\geq0.70$; retain at most two flagged-pitch occurrences. Fallback uses $\epsilon=0.001$ s and $\lambda\geq0.2$. \\
+Event repair & Offsets \{+2,-2,+3,-3,+5,-5,+7,-7,+1,-1,+12,-12,0\} around rounded Call mean pitch, clipped to the allowed register. \\
+Theory refinements & Strong beats 1 and 3 within half a generation grid step; stable major degrees \{0,4,7\}; root cadence; preset-specific maximum leap from Table~\ref{tab:parameter-presets}. \\
+Endpoint primary & $\theta=0.05$; at most $K_{\mathrm{on}}=8$ clustered onsets; $\mu_{\min}=0.25$ s$^{-1}$; 80 ms chord cluster; 150 ms confirmation; no cutoff clamp. \\
+Scheduler replay & Commit-anchored startup target $B=80$ ms; pre-commit horizon $H=150$ ms for L1 and 0 for L0. \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -547,42 +591,83 @@ and six component scores:
 \mathcal D &=0.55c(H_{\mathrm{pc}};2.0,0.65)+0.45c(U_{\mathrm{pc}};5,2),\\
 \mathcal C &=c(Z;0.65,0.35).
 \end{align}
-PSR, cadence (Cad), and strong-beat stability (SB) use the configured C-major-pentatonic reference; SW is the share of intervals no larger than 3 semitones and TSR the share larger than 7. QN counts durations of at least 0.125 beats; QRF accepts distances no greater than 0.065 beats from \{0.125, 0.25, 0.375, 0.5, 0.75, 1, 1.5, 2, 3, 4\}; G compares adjacent bars on a 16-slot binary onset grid. $H_{\mathrm{pc}}$ is pitch-class entropy, $U_{\mathrm{pc}}$ the number of used pitch classes, and $Z$ the zlib/raw-byte ratio of rounded onset--duration--pitch tuples. Empty responses receive zero on every score.
+PSR, cadence (Cad), and strong-beat stability (SB) use the configured C-major-pentatonic reference; SW is the share of intervals no larger than 3 semitones and TSR the share larger than 7. QN counts durations of at least 0.125 beats; QRF accepts distances no greater than 0.065 beats from \{0.125, 0.25, 0.375, 0.5, 0.75, 1, 1.5, 2, 3, 4\}; G compares successive occupied bars on a 16-slot binary onset grid. $H_{\mathrm{pc}}$ is base-2 pitch-class entropy, $U_{\mathrm{pc}}$ the number of used pitch classes, and $Z$ the zlib/raw-byte ratio of a fixed onset--duration--pitch serialization. Empty responses receive zero on every score. Appendix~\ref{app:evaluator-specification} gives the denominators, serialization, rounding, and empty/single-note edge cases needed to reproduce these values.
 
 The reported structural-compliance composite (SCC; retained as \texttt{objective\_score} in legacy CSV fields) is exactly
 \begin{equation}
 \mathrm{SCC}=0.22\mathcal T+0.20\mathcal R+0.18\mathcal I+0.16\mathcal P+0.14\mathcal D+0.10\mathcal C.
 \label{eq:scc}
 \end{equation}
-To expose direct optimization by A5, it is decomposed as
+To expose the family of terms explicitly manipulated by the style and theory modules, SCC is decomposed as
 \begin{equation}
-S_{\mathrm{style}}=\frac{0.22\mathcal T+0.20\mathcal R}{0.42},\qquad
-S_{\mathrm{nonstyle}}=\frac{0.18\mathcal I+0.16\mathcal P+0.14\mathcal D+0.10\mathcal C}{0.58},
+S_{\mathrm{constraint}}=\frac{0.22\mathcal T+0.20\mathcal R}{0.42},\qquad
+S_{\mathrm{remaining}}=\frac{0.18\mathcal I+0.16\mathcal P+0.14\mathcal D+0.10\mathcal C}{0.58},
 \end{equation}
-so $\mathrm{SCC}=0.42S_{\mathrm{style}}+0.58S_{\mathrm{nonstyle}}$. The weights and normalizations are fixed code parameters, not learned from listener ratings. SCC measures rule/structure compliance, not musical quality; human ratings remain a separate outcome \citep{ji2023survey,lerch2025evaluation}.
+so $\mathrm{SCC}=0.42S_{\mathrm{constraint}}+0.58S_{\mathrm{remaining}}$. $S_{\mathrm{constraint}}$ contains the fixed C-major-pentatonic, cadence, strong-beat, and grid-related terms targeted across A5 and A6. It is retained as \path{style_compliance_score} only in legacy CSV fields. $S_{\mathrm{remaining}}$ is likewise retained as \path{non_style_structural_score}; it is not an independent quality measure because A2 directly targets repetition, A3 changes the symbolic-compression term through onset/duration reshaping, and other controls can affect interval and diversity terms. Both families are manipulation checks for declared output rules. They do not measure motif, contour, harmonic fit, or rhythmic correspondence between Call and response. In particular, a high fixed-C score can coexist with tonal conflict against a non-C Call. The weights and normalizations are fixed code parameters, not learned from listener ratings; SCC must not be interpreted as musical quality \citep{ji2023survey,lerch2025evaluation}.
+
+\subsection{Call--Response Feature Association Audit}
+\label{subsec:feature-association-method}
+
+To test limited input--output contingency without human labels, the 27,000 existing response MIDI files are paired back to their Call100 inputs through the frozen answer keys and verified SHA-256 values. Note-On events are grouped by the same start-anchored 80 ms cluster rule used by the endpoint analysis, and each cluster is represented by its median pitch. Three transposition- or duration-normalized similarities are then computed: (i) Pearson correlation between independently centered, unit-normalized 16-point pitch contours resampled by event index; (ii) multiset Dice overlap of adjacent signed interval 2-grams, with each interval clipped to $[-12,12]$ semitones; and (iii) cosine similarity between 16-bin onset-cluster profiles after normalizing each phrase by its own onset span. Short or zero-variance phrases receive NA, and coverage is reported rather than replacing missing values by zero.
+
+For manuscript-only reproduction, a cluster includes onsets no more than 80 ms from its first onset, and an even-sized cluster uses the arithmetic mean of its two middle pitches. Contours require at least three clusters, are linearly interpolated at 16 equally spaced event-index positions, mean-centered, and normalized by their Euclidean ($L_2$) norm; a centered norm no larger than $10^{-12}$ yields NA. Signed intervals are rounded to the nearest integer with Python ties-to-even rounding before clipping, and their multiset Dice score is $2\sum_g\min[n_C(g),n_R(g)]/(\sum_g n_C(g)+\sum_g n_R(g))$; fewer than three clusters yields NA. Onset profiles require at least two clusters and onset span greater than $10^{-12}$ s. An onset $t$ maps to bin $\min\{15,\lfloor16(t-t_0)/(t_{\mathrm{last}}-t_0)\rfloor\}$; the 16 counts are $L_2$-normalized before their dot product is taken.
+
+For each fixed preset, candidate, and trial block containing all 100 Calls, an observed similarity $s_m(C_i,R_i)$ is compared with the valid subset of the other 99 response pairings in that block. Define
+\begin{equation}
+J_{i,m}=\{j\ne i:s_m(C_i,R_j)\ \text{is defined}\}.
+\end{equation}
+Then
+\begin{equation}
+A_m(C_i,R_i)=
+\begin{cases}
+s_m(C_i,R_i)-\dfrac{1}{|J_{i,m}|}\displaystyle\sum_{j\in J_{i,m}}s_m(C_i,R_j),
+& s_m(C_i,R_i)\ \text{defined and }|J_{i,m}|>0,\\
+\mathrm{NA}, & \text{otherwise}.
+\end{cases}
+\label{eq:association-excess}
+\end{equation}
+Coverage is the fraction of the 9000 preset--trial--Call rows per candidate for which $A_m$ is defined; it is not coverage of all $100\times100$ matrix cells. The archived dynamic mismatch counts range from 89 to 99 for contour, 95 to 99 for interval 2-grams, and are exactly 99 for onset profiles. Positive association excess therefore means only that the observed pairing shares more of feature $m$ than same-condition mismatches in this finite development benchmark. It does not measure harmonic appropriateness, motif function, musical quality, perceptual contingency, or causal benefit of a control module.
+
+Inference retains each preset--trial block's complete score matrix rather than treating the derived $A_m$ values as fixed. Within a candidate and metric, valid block-level excesses are first averaged within Call and then across 100 equally weighted Calls. For each delete-one-Call replicate, the deleted Call and its response are removed from every block, every retained mismatch mean is rebuilt, and the full aggregation is repeated. With $M=100$ replicates, the classical jackknife standard error and normal interval are
+\begin{equation}
+\operatorname{SE}_{J}=\sqrt{\frac{M-1}{M}\sum_{d=1}^{M}\left(\widehat\theta_{(-d)}-\overline{\widehat\theta}_{(-\cdot)}\right)^2},
+\qquad \operatorname{CI}_{95}=\widehat\theta\pm1.96\operatorname{SE}_{J}.
+\label{eq:association-jackknife}
+\end{equation}
+Candidate contrasts use the same paired deletion and rebuild both candidates' banks. A Call contributes to a contrast only when both candidates' within-Call excesses are defined after block aggregation; this pairwise-valid rule is reapplied after every deletion. The 87-source sensitivity deletes all Calls from one source, rebuilds all retained banks, averages valid Calls within each retained source, and gives retained sources equal weight; Equation~\eqref{eq:association-jackknife} then uses $M=87$. This analysis is deterministic and uses no bootstrap seed or hypothesis-test $p$-values.
+
+The primary mismatch bank includes every other Call in the same condition, so different excerpts from one POP909 song may appear as alternatives. A pre-release sensitivity therefore retains each matched diagonal but removes off-diagonal responses whose source cluster equals that of the focal Call, then rebuilds every bank and both Call/source jackknives. This checks whether within-song alternatives drive the candidate contrast.
 
 \subsection{Evaluation Integrity and Shared Batches}
 \label{subsec:evaluation-integrity}
 
 A reproducibility audit found that the legacy candidate runner labeled \texttt{amt\_small\_raw} after applying style projection, producing 0.683141; that summary is excluded. The harmonized comparison uses the exact A0 raw and A6 controlled batches from the 63,000-row ablation, paired by preset, call, trial, and seed, and retains the rule-based motif batch. All 27,000 MIDI files were re-scored by the same evaluator; maximum score drift from stored values was $5\times10^{-7}$ and no row exceeded that tolerance. Thus Tables~\ref{tab:candidate-summary} and~\ref{tab:ablation-summary} share identical raw/controlled outputs and means; no AMT output was regenerated to repair the comparison.
 
+\subsection{Statistical Units and Cluster-Aware Inference}
+\label{subsec:statistical-units}
+
+The six presets and 15 trials create 90 repeated rows per Call and condition. These rows describe sampling variability but are not 90 independent musical inputs. For SCC candidate summaries, paired candidate/module contrasts, and scheduler quantities, the analysis first averages repeated rows within each of the 100 Calls and then uses 50,000 nonparametric bootstrap resamples, with replacement, of those equally weighted Call means. Paired contrasts are computed within Call before resampling, and intervals are the linearly interpolated 2.5th--97.5th percentiles. The paper-level script uses base seed 20260815 plus fixed, documented offsets; the seed controls Monte Carlo resampling only, not generation. Feature association is different because deleting an input also changes every retained Call's shared mismatch bank. Its uncertainty therefore uses deterministic delete-one Call/source jackknife intervals that rebuild the affected banks, as specified in Section~\ref{subsec:feature-association-method}. Endpoint PS-F1 uses its separately reported 2000-resample Call bootstrap and has no source-cluster reanalysis.
+
+For source sensitivity in the candidate, ablation, scheduler, and feature-association analyses, the 90 public Calls are grouped by their 77 POP909 song IDs while the 10 artificial Calls remain separate, yielding 87 source clusters. Calls are first averaged within source; the sensitivity estimand is the unweighted mean of the 87 source means, so a song with multiple excerpts receives the same weight as a single-Call source. Candidate, ablation, and scheduler source intervals resample those source means with replacement; feature-association source intervals instead delete one source at a time and rebuild all retained mismatch banks. Leave-one-source-out ranges are archived where applicable. No participant-level inference is included in this manuscript.
+
 \subsection{Overall Candidate Comparison and Statistical Significance}
 \label{subsec:overall-comparison}
 
-Table~\ref{tab:candidate-summary} reports 9000 harmonized observations per strategy. Controlled AMT raises SCC from 0.560968 to 0.732610; the motif baseline remains higher at 0.752682.
+Table~\ref{tab:candidate-summary} reports all repeated rows descriptively but places uncertainty on the 100 Call means. Controlled AMT raises SCC from 0.560968 to 0.732610; the motif baseline remains higher at 0.752682.
 
 \begin{table}[htbp]
 \centering
-\caption{Overall comparison of candidate strategies}
+\caption{Candidate means with 95\% Call-cluster bootstrap intervals}
 \label{tab:candidate-summary}
 \small
-\begin{tabular}{L{0.28\linewidth}rrrr}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{L{0.22\linewidth}rrL{0.23\linewidth}rr}
 \toprule
-Candidate strategy & Samples & SCC & Style & Non-style \\
+Candidate strategy & Rows & Calls & SCC (95\% CI) & Constraint target & Remaining \\
 \midrule
-Motif baseline & 9000 & 0.752682 & 0.854195 & 0.679172 \\
-Controlled AMT (A6) & 9000 & 0.732610 & 0.809814 & 0.676704 \\
-Raw AMT (A0) & 9000 & 0.560968 & 0.563724 & 0.558971 \\
+Motif baseline & 9000 & 100 & 0.752682 [0.741863, 0.763309] & 0.854195 & 0.679172 \\
+Controlled AMT (A6) & 9000 & 100 & 0.732610 [0.722531, 0.742323] & 0.809814 & 0.676704 \\
+Raw AMT (A0) & 9000 & 100 & 0.560968 [0.547154, 0.575198] & 0.563724 & 0.558971 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -590,29 +675,56 @@ Raw AMT (A0) & 9000 & 0.560968 & 0.563724 & 0.558971 \\
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.96\linewidth]{figures/call100_candidate_level_comparison.pdf}
-\caption{Harmonized Call100 comparison. Panel (a) reports SCC with 95\% confidence intervals, panel (b) separates style and non-style components, and panel (c) shows controlled-minus-raw SCC by preset.}
+\caption{Harmonized Call100 comparison. Panel (a) reports SCC with 95\% intervals over 100 Call means, panel (b) separates the constraint-target and remaining components, and panel (c) shows descriptive controlled-minus-raw SCC by preset.}
 \label{fig:call100-candidate-level-comparison}
 \end{figure}
 
-Paired differences in Table~\ref{tab:bootstrap-tests} use the shared preset/call/trial key. Controlled minus raw is +0.171642 (95\% bootstrap CI [0.168923, 0.174287], $d_z=1.295$), while controlled minus motif is -0.020072. Numerical underflow is reported as $p<10^{-6}$, never $p=0$.
+Paired differences in Table~\ref{tab:bootstrap-tests} are first averaged over the shared preset/trial rows within each Call. Controlled minus raw is +0.171642 (95\% Call-cluster CI [0.157901, 0.185151]), while controlled minus motif is -0.020072 [−0.031425, −0.008749].
 
 \begin{table}[htbp]
 \centering
-\caption{Paired candidate comparisons under the harmonized evaluator}
+\caption{Cluster-aware paired candidate comparisons under the harmonized evaluator}
 \label{tab:bootstrap-tests}
-\small
-\begin{tabular}{L{0.34\linewidth}r L{0.25\linewidth}r}
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{L{0.21\linewidth}rL{0.18\linewidth}rL{0.18\linewidth}}
 \toprule
-Comparison & Mean difference & Bootstrap 95\% CI & paired $t$ $p$ \\
+Comparison & Call mean & Call 95\% CI & Positive Calls & Source mean [95\% CI] \\
 \midrule
-\texttt{controlled - raw} & +0.171642 & [0.168923, 0.174287] & $<10^{-6}$ \\
-\texttt{controlled - motif} & -0.020072 & [-0.022331, -0.017814] & $<10^{-6}$ \\
-\texttt{motif - raw} & +0.191714 & [0.188850, 0.194556] & $<10^{-6}$ \\
+Controlled--raw & +0.171642 & [0.157901, 0.185151] & 100/100 & 0.173270 [0.158728, 0.187555] \\
+Controlled--motif & -0.020072 & [-0.031425, -0.008749] & 40/100 & -0.020741 [-0.032944, -0.008721] \\
+Motif--raw & +0.191714 & [0.174714, 0.208189] & 96/100 & 0.194012 [0.176257, 0.211206] \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Controlled AMT exceeds raw AMT under every preset, but the motif baseline leads both score families. The claim is therefore improved structural compliance over raw AMT, not baseline dominance or listener preference.
+Controlled AMT exceeds raw AMT in every Call-level average, while the motif baseline leads SCC and the constraint-target family. The 87-source-cluster sensitivity intervals preserve all three contrast directions. These are output-compliance results, not conditional-response quality or listener preference.
+
+\subsection{Call--Response Feature Association Results}
+\label{subsec:feature-association-results}
+
+Table~\ref{tab:feature-association} reports Equation~\eqref{eq:association-excess} after aggregation to 100 Call means. Raw AMT shows the largest positive interval-2gram association, whereas the motif transform shows the largest positive onset-profile association and a strongly negative contour association. The last result is consistent with the baseline's deliberate pitch inversion; it is not evidence of poor musical quality. Contour coverage is 97.86\%, 99.78\%, and 99.32\% for raw, controlled, and motif responses, respectively; interval coverage is at least 99.33\%, and onset-profile coverage is 100\%.
+
+\begin{table}[htbp]
+\centering
+\caption{Matched-minus-mismatched Call--response feature association excess (Call mean [95\% bank-rebuilding delete-one-Call jackknife CI]).}
+\label{tab:feature-association}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrr}
+\toprule
+Feature & Raw AMT & Controlled AMT & Motif baseline \\
+\midrule
+Contour correlation & -0.014669 [-0.047801, 0.018463] & -0.043639 [-0.093617, 0.006339] & -0.647758 [-0.690848, -0.604667] \\
+Interval-2gram Dice & 0.138600 [0.117683, 0.159517] & 0.041885 [0.029691, 0.054079] & 0.014844 [0.004651, 0.025037] \\
+Onset-profile cosine & 0.009886 [0.004497, 0.015275] & 0.029901 [0.017318, 0.042484] & 0.152945 [0.127009, 0.178882] \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The association audit exposes a control trade-off that SCC alone cannot show. For controlled minus raw, the interval-2gram association contrast is -0.096715 (Call-jackknife 95\% CI [-0.113257, -0.080172]), whereas the onset-profile contrast is +0.020016 [0.006927, 0.033105]; the contour contrast is inconclusive at -0.028970 [-0.064251, 0.006311]. Thus the external controls reshape which Call features remain visible in the response rather than improving correspondence uniformly. The equal-source contrasts preserve the interval contrast at -0.104344 [-0.122009, -0.086678] and onset-profile contrast at +0.020158 [0.006123, 0.034193], while contour remains inconclusive at -0.032176 [-0.066140, 0.001789]. These are narrow feature-association checks on a development benchmark, not evidence that one candidate responds more appropriately to a human performer.
+
+Excluding same-source mismatches leaves the interpretation unchanged: controlled minus raw is -0.096742 [-0.113273, -0.080210] for interval 2-grams, +0.020266 [0.006888, 0.033643] for onset profile, and -0.028909 [-0.064386, 0.006568] for contour. The corresponding equal-source intervals also preserve the negative, positive, and inconclusive directions, respectively.
 
 \subsection{Controlled-AMT Module Ablation}
 \label{subsec:controlled-amt-ablation}
@@ -625,26 +737,26 @@ The final validation confirms 63,000 actual rows, 4200 preset/variant/call group
 
 \begin{table}[htbp]
 \centering
-\caption{Controlled-AMT ablation variants}
+\caption{Cumulative A0--A6 switch matrix}
 \label{tab:ablation-variants}
-\small
-\setlength{\tabcolsep}{4pt}
-\begin{tabular}{lL{0.25\linewidth}L{0.50\linewidth}}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lccccccL{0.28\linewidth}}
 \toprule
-Variant & Module added & Description \\
+Variant & Clean & Repetition & Duration & Fallback & Style & Theory & Interpretation \\
 \midrule
-A0 & Raw AMT & No external control. \\
-A1 & Prompt cleaning & Only tail-repeat compression and prompt cleaning are enabled. \\
-A2 & Repetition suppression & Adds generation-time repetition suppression and resampling. \\
-A3 & Duration matching & Adds response duration and note-count matching. \\
-A4 & Motif fallback & Adds motif fallback for empty or invalid neural output. \\
-A5 & Style constraint & Adds pentatonic, two-bar, and 4/4 response style constraints. \\
-A6 & Full controlled & All controlled-AMT modules are enabled. \\
+A0 & -- & -- & -- & -- & -- & -- & Raw AMT. \\
+A1 & $\checkmark$ & -- & -- & -- & -- & -- & Tail-repeat compression and prompt cleaning. \\
+A2 & $\checkmark$ & $\checkmark$ & -- & -- & -- & -- & Adds rejection, resampling, and event repair. \\
+A3 & $\checkmark$ & $\checkmark$ & $\checkmark$ & -- & -- & -- & Adds duration and note-count matching. \\
+A4 & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ & -- & -- & Enables whole-phrase motif fallback. \\
+A5 & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ & -- & Adds pentatonic/two-bar/4/4 projection. \\
+A6 & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ & Adds cadence, strong-beat, and maximum-leap rules. \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Table~\ref{tab:ablation-summary} reports SCC and its two predeclared components over 9000 samples per variant. A0 to A6 gains 0.171642 in SCC and 0.117733 in non-style structure.
+The variants are cumulative, so each step estimates the conditional increment after earlier switches, not a permutation-invariant main effect. In particular, A6--A5 isolates cadence, strong-beat, and maximum-leap refinements; it is not an unspecified second style module. Table~\ref{tab:ablation-summary} reports SCC and its two versioned, fixed-for-final-analysis components over 9000 repeated rows per variant. A0 to A6 gains 0.171642 in SCC and 0.117733 in the remaining component.
 
 \begin{table}[htbp]
 \centering
@@ -654,7 +766,7 @@ Table~\ref{tab:ablation-summary} reports SCC and its two predeclared components 
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{lrrr}
 \toprule
-Variant & SCC & Style compliance & Non-style structure \\
+Variant & SCC & Constraint-target score & Remaining components \\
 \midrule
 A0 raw AMT & 0.560968 & 0.563724 & 0.558971 \\
 A1 prompt cleaning & 0.574265 & 0.566740 & 0.579714 \\
@@ -670,28 +782,28 @@ A6 full controlled & 0.732610 & 0.809814 & 0.676704 \\
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.92\linewidth]{figures/ablation_objective_scores.pdf}
-\caption{A0--A6 score decomposition. Grouped bars report SCC, style compliance, and non-style structure over 9000 samples per variant.}
+\caption{A0--A6 score decomposition. Grouped bars report SCC, the constraint-target score, and the remaining score components over 9000 repeated rows per variant.}
 \label{fig:ablation-objective-scores}
 \end{figure}
 
-Figure~\ref{fig:ablation-objective-scores} makes the A5 mechanism visible: style compliance rises by 0.188750, while non-style structure decreases by 0.018746. The SCC increase at A5 is therefore a constraint-compliance manipulation check, not independent evidence of musical quality.
+Figure~\ref{fig:ablation-objective-scores} makes the A5 mechanism visible: the constraint-target score rises by 0.188750, while the remaining component decreases by 0.018746. The SCC increase at A5 is therefore a constraint-compliance manipulation check, not independent evidence of musical quality. Earlier modules also target terms in the remaining component, so that component is not a control outcome.
 
 \begin{table}[htbp]
 \centering
-\caption{Stepwise module contributions to SCC}
+\caption{Stepwise SCC contributions with 95\% Call-cluster intervals}
 \label{tab:ablation-contributions}
 \small
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{llrcr}
 \toprule
-Step & Module added & Mean delta & 95\% CI & $p$ \\
+Step & Module added & Mean delta & 95\% CI & Positive Calls \\
 \midrule
-A1--A0 & Prompt cleaning & 0.013297 & [0.010832, 0.015736] & $<10^{-6}$ \\
-A2--A1 & Repetition suppression & 0.036439 & [0.034068, 0.038919] & $<10^{-6}$ \\
-A3--A2 & Duration matching & 0.029822 & [0.028143, 0.031398] & $<10^{-6}$ \\
-A4--A3 & Motif fallback & 0.000000 & [0.000000, 0.000000] & n/a (all ties) \\
-A5--A4 & Style constraint & 0.068403 & [0.066357, 0.070537] & $<10^{-6}$ \\
-A6--A5 & Full controlled & 0.023681 & [0.022480, 0.024868] & $<10^{-6}$ \\
+A1--A0 & Prompt cleaning & 0.013297 & [0.007294, 0.019632] & 54/100 \\
+A2--A1 & Repetition suppression & 0.036439 & [0.028276, 0.045060] & 85/100 \\
+A3--A2 & Duration matching & 0.029822 & [0.022882, 0.036700] & 92/100 \\
+A4--A3 & Motif fallback & 0.000000 & [0.000000, 0.000000] & 0/100 (all ties) \\
+A5--A4 & Style projection & 0.068403 & [0.056710, 0.080175] & 91/100 \\
+A6--A5 & Full-theory rules & 0.023681 & [0.018953, 0.028472] & 91/100 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -699,7 +811,7 @@ A6--A5 & Full controlled & 0.023681 & [0.022480, 0.024868] & $<10^{-6}$ \\
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.92\linewidth]{figures/module_contribution_plot.pdf}
-\caption{Stepwise changes in SCC, style compliance, and non-style structure. A5 directly optimizes the style family and slightly decreases the non-style family.}
+\caption{Descriptive stepwise changes in SCC, the constraint-target score, and the remaining component. A5 directly changes its target family and slightly decreases the remaining component.}
 \label{fig:module-contribution-plot}
 \end{figure}
 
@@ -707,7 +819,7 @@ The fallback audit in Table~\ref{tab:fallback-audit} resolves the A3--A4 all-zer
 
 \begin{table}[htbp]
 \centering
-\caption{Fallback activation audit over 9000 samples per variant}
+\caption{Fallback activation audit over 9000 repeated rows per variant}
 \label{tab:fallback-audit}
 \small
 \begin{tabular}{lrrrr}
@@ -725,83 +837,111 @@ A6 & 3712 & 5263 & 0 & 0 \\
 \end{tabular}
 \end{table}
 
-The evaluator assigns SCC=0 to an empty response. No A3 response was empty, so A4 had no eligible phrase and activated motif fallback zero times; if activated, the replacement MIDI would be evaluated after generation like every other output. All 9000 A3--A4 SCC differences are exactly zero and all 9000 response MIDI files are byte-identical. Within either variant, the 5288 samples without event repair average 0.643951, while the 3712 repaired samples average 0.635647. Therefore A4 is an unexercised safety branch in this run, not evidence that fallback is effective or ineffective.
+The evaluator assigns SCC=0 to an empty response. No A3 response was empty, so A4 had no eligible phrase and activated motif fallback zero times; if activated, the replacement MIDI would be evaluated after generation like every other output. All 9000 A3--A4 SCC differences are exactly zero and all 9000 response MIDI files are byte-identical. A code-level smoke test is provided to force an empty-output case and check for playable MIDI; it requires the optional AMT runtime and tests execution, not musical effectiveness. Within either variant, the 5288 samples without event repair average 0.643951, while the 3712 repaired samples average 0.635647. Therefore A4 is an unexercised safety branch in the Call100 run, and the 41.24\% event-repair rate cannot be used as evidence for motif fallback.
 
 \subsection{Direct MIDI-VAD Endpoint Benchmark}
 \label{subsec:endpoint-benchmark}
 
-The endpoint detector is evaluated directly by replaying all 100 Call100 files at 5 ms polling resolution. The final Note-Off of each isolated file is a reproducible proxy boundary. For each post-boundary deadline $d\in\{0.5,1.0,2.0\}$ s, at most one commit in $[T_{\mathrm{ref}}-0.1,T_{\mathrm{ref}}+d]$ is a true positive; other commits are false positives and an unmatched file is a false negative. The two-second deadline is the primary table, while all deadlines remain in the archive. This proxy does not replace human phrase-boundary annotation.
+The endpoint detector is evaluated by replaying all 100 Call100 files at 5 ms polling resolution. Replay stops at the first Commit, matching the deployed Listening $\rightarrow$ Candidate $\rightarrow$ Commit $\rightarrow$ Inference transition. The final Note-Off of each isolated file is a reproducible proxy boundary. For each post-boundary deadline $d\in\{0.5,1.0,2.0\}$ s, the first Commit is classified as premature ($P$) if earlier than $T_{\mathrm{ref}}-0.1$ s, successful ($S$) if within $[T_{\mathrm{ref}}-0.1,T_{\mathrm{ref}}+d]$, late ($L$) if after that interval, or missed ($M$) if no Commit occurs by the replay horizon $T_{\mathrm{ref}}+15$ s. The custom premature-sensitive first-commit score (PS-F1) sets $TP=S$, $FP=P$, and $FN=P+L+M$, then applies the usual precision/recall harmonic mean. A premature action is counted as both a spurious early Commit and a lost correct turn; a late/missed action is counted only as a failure to Commit within the deadline, not as an additional early action. PS-F1 is therefore an asymmetric safety-oriented engineering score, not standard event-detection F1. The two-second deadline is the primary table, while all deadlines remain in the archive. Signed error is $t_{\mathrm{commit}}-T_{\mathrm{ref}}$ and is summarized only for the $S$ cases; premature, late, and missed cases are excluded from the error distribution. This proxy is structurally mismatched to the detector: its silence clock starts at the latest Note-On, whereas the reference is the final Note-Off. Sustained notes and pedal-held sonorities can therefore alter apparent signed error, and the deployed detector has no active-note or sustain-pedal gate. The benchmark tests reproducible engineering behavior, not a human judgment of the earliest acceptable response onset.
 
-The main conditions compare adaptive MIDI-VAD with clustering/confirmation ablations and fixed 300, 500, and 800 ms silence thresholds. All fixed baselines retain the 80 ms cluster and 150 ms confirmation settings. Table~\ref{tab:endpoint-benchmark} reports 100 calls per condition; F1 intervals use 2000 call-level bootstrap resamples.
+The main conditions compare adaptive MIDI-VAD with clustering/confirmation ablations and fixed 300, 500, and 800 ms silence thresholds. All fixed baselines retain the 80 ms cluster and 150 ms confirmation settings. Table~\ref{tab:endpoint-benchmark} reports 100 calls per condition; PS-F1 intervals use 2000 Call-level bootstrap resamples. For deadline $d$, the independent endpoint script uses Python \texttt{random.Random} seed $20260809+\operatorname{int}(1000d)$ for every condition and reports the linearly interpolated 2.5th and 97.5th percentiles, using position $(B-1)q$ for $B=2000$ ordered replicates. No source-cluster reanalysis was performed for this endpoint benchmark, so its intervals use the 100 Call units only.
 
 \begin{table}[htbp]
 \centering
-\caption{Call100 endpoint results at the two-second post-boundary deadline}
+\caption{First-commit Call100 endpoint results at the two-second post-boundary deadline. Prec. and Rec. denote precision and recall; $P$ in $S/P/L/M$ denotes premature. The four outcomes are mutually exclusive and sum to 100; error summaries use only the $S$ cases.}
 \label{tab:endpoint-benchmark}
-\small
-\setlength{\tabcolsep}{3.5pt}
-\begin{tabular}{lrrrrrr}
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lrrrL{0.16\linewidth}lrr}
 \toprule
-Condition & Precision & Recall & F1 & Premature & Cancel rate & Median error s \\
+Condition & Prec. & Rec. & PS-F1 & 95\% CI & $S/P/L/M$ & Cancel & Error$^\dagger$ s \\
 \midrule
-Adaptive full & 0.624 & 0.830 & 0.712 & 38 & 0.070 & 0.796 \\
-No clustering & 0.610 & 0.830 & 0.703 & 42 & 0.087 & 0.796 \\
-No confirmation & 0.597 & 0.860 & 0.705 & 49 & 0.000 & 0.632 \\
-Neither & 0.571 & 0.840 & 0.680 & 53 & 0.000 & 0.632 \\
-Fixed 300 ms & 0.250 & 0.760 & 0.376 & 228 & 0.374 & 0.330 \\
-Fixed 500 ms & 0.427 & 0.880 & 0.575 & 118 & 0.116 & 0.500 \\
-Fixed 800 ms & 0.575 & 0.920 & 0.708 & 68 & 0.130 & 0.793 \\
+Adaptive full & 0.638 & 0.600 & 0.619 & [0.523, 0.711] & 60/34/6/0 & 0.083 & 0.778 \\
+No clustering & 0.632 & 0.600 & 0.615 & [0.520, 0.708] & 60/35/5/0 & 0.099 & 0.778 \\
+No confirmation & 0.571 & 0.560 & 0.566 & [0.467, 0.663] & 56/42/2/0 & 0.000 & 0.623 \\
+Neither & 0.551 & 0.540 & 0.545 & [0.444, 0.640] & 54/44/2/0 & 0.000 & 0.623 \\
+Fixed 300 ms & 0.130 & 0.130 & 0.130 & [0.070, 0.200] & 13/87/0/0 & 0.482 & 0.418 \\
+Fixed 500 ms & 0.300 & 0.300 & 0.300 & [0.210, 0.390] & 30/70/0/0 & 0.200 & 0.516 \\
+Fixed 800 ms & 0.500 & 0.500 & 0.500 & [0.400, 0.590] & 50/50/0/0 & 0.180 & 0.778 \\
 \bottomrule
 \end{tabular}
+\par\raggedright\footnotesize $^\dagger$ Median of $t_{\mathrm{commit}}-T_{\mathrm{ref}}$ among successful first commits only; its effective $N$ is the first number in $S/P/L/M$.
 \end{table}
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.96\linewidth]{figures/endpoint_benchmark.pdf}
-\caption{Direct endpoint benchmark. Panel (a) reports precision, recall, and F1; panel (b) shows premature commits and median signed boundary error.}
+\caption{First-commit endpoint benchmark. Panel (a) reports precision, recall, and the custom PS-F1; panel (b) shows premature commits and median signed boundary error among successful first commits.}
 \label{fig:endpoint-benchmark}
 \end{figure}
 
-Adaptive full yields F1=0.712 (95\% CI [0.638, 0.784]), comparable to fixed 800 ms at 0.708 [0.646, 0.767], while reducing premature commits from 68 to 38; the overlapping intervals do not establish superiority. Its recall is 0.14, 0.58, and 0.83 at the 0.5, 1.0, and 2.0 s deadlines, respectively, exposing the latency cost of conservative segmentation. Cluster-window sensitivity gives F1 values 0.703, 0.715, 0.712, and 0.704 at 0, 40, 80, and 120 ms. Confirmation sensitivity gives 0.705, 0.695, 0.712, and 0.728 at 0, 75, 150, and 250 ms, while median error rises from 0.632 to 0.705, 0.796, and 0.896 s. Thus 80/150 ms is a middle operating point, not a uniquely optimal constant.
+Adaptive full yields PS-F1=0.619 (95\% CI [0.523, 0.711]), compared with fixed 800 ms at 0.500 [0.400, 0.590], while reducing premature first commits from 50 to 34; the overlapping intervals do not establish superiority. Its recall is 0.12, 0.40, and 0.60 at the 0.5, 1.0, and 2.0 s deadlines, respectively. At two seconds, cluster windows of 0, 40, 80, and 120 ms yield PS-F1 values 0.615, 0.615, 0.619, and 0.619. Confirmation delays of 0, 75, 150, and 250 ms yield 0.566, 0.574, 0.619, and 0.663, while the success-only median signed error rises from 0.623 to 0.701, 0.778, and 0.895 s.
+
+The broader sensitivity audit confirms a strong operating-point trade-off (Table~\ref{tab:endpoint-sensitivity}). Lowering $\theta$ from 0.05 to 0.02 increases PS-F1 to 0.705 and reduces premature commits to 23, but raises the success-only median signed error to 1.065 s; $\theta=0.10$ and 0.20 reduce that conditional median to 0.605 and 0.412 s while PS-F1 falls to 0.530 and 0.390. Windows of 4 and 12 and intensity floors of 0.125 and 0.50 change PS-F1 little on these Calls. Upper cutoff clamps of 2 and 4 s yield PS-F1=0.650 and 0.608. The unclamped primary setting is a mechanism baseline fixed for the final analysis, not a recommended deployment operating point. All sensitivity settings were examined on the development benchmark, not selected and confirmed on a held-out test set; no value is claimed as universally optimal.
+
+\begin{table}[htbp]
+\centering
+\caption{Selected first-commit sensitivity results at the two-second deadline. Prec. and Rec. denote precision and recall; $P$ in $S/P/L/M$ denotes premature. PS-F1 intervals use 2000 Call-level bootstrap resamples; the outcome counts expose the effective success-only error sample.}
+\label{tab:endpoint-sensitivity}
+\footnotesize
+\setlength{\tabcolsep}{2pt}
+\begin{tabular}{lrrrL{0.18\linewidth}lr}
+\toprule
+Setting & Prec. & Rec. & PS-F1 & 95\% CI & $S/P/L/M$ & Error s \\
+\midrule
+Primary ($\theta=.05$, 150 ms, no clamp) & 0.638 & 0.600 & 0.619 & [0.523, 0.711] & 60/34/6/0 & 0.778 \\
+Cluster 40 ms & 0.632 & 0.600 & 0.615 & [0.520, 0.708] & 60/35/5/0 & 0.778 \\
+Cluster 120 ms & 0.638 & 0.600 & 0.619 & [0.523, 0.711] & 60/34/6/0 & 0.778 \\
+Confirmation 75 ms & 0.589 & 0.560 & 0.574 & [0.472, 0.667] & 56/39/5/0 & 0.701 \\
+Confirmation 250 ms & 0.688 & 0.640 & 0.663 & [0.565, 0.751] & 64/29/7/0 & 0.895 \\
+$\theta=.02$ & 0.744 & 0.670 & 0.705 & [0.613, 0.792] & 67/23/10/0 & 1.065 \\
+$\theta=.10$ & 0.530 & 0.530 & 0.530 & [0.440, 0.630] & 53/47/0/0 & 0.605 \\
+$\theta=.20$ & 0.390 & 0.390 & 0.390 & [0.300, 0.480] & 39/61/0/0 & 0.412 \\
+Max cutoff 2 s & 0.650 & 0.650 & 0.650 & [0.560, 0.740] & 65/35/0/0 & 0.805 \\
+Max cutoff 4 s & 0.628 & 0.590 & 0.608 & [0.510, 0.701] & 59/35/6/0 & 0.780 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \subsection{Runtime Latency Logging and Scheduler Replay}
 \label{subsec:latency-logging}
 
-SCC does not characterize scheduler responsiveness. The latency experiment therefore replays actual local AMT decoding timings collected during the A6 runs. The machine is a Lenovo 82JQ running 64-bit Windows 11 Pro, with an AMD Ryzen 7 5800H (8 cores/16 logical processors), 15.86 GiB physical RAM, and an NVIDIA GeForce RTX 3060 Laptop GPU with 6144 MiB VRAM. L0 starts decoding at endpoint commit. L1 overlaps decoding only with the confirmation interval, so $\Delta T_{\mathrm{preload}}=\Delta T_{\mathrm{confirm}}=150$ ms; no additional 250 ms horizon exists. Both use an 80 ms micro-buffer and underrun deadline. Inference timings are observed, whereas endpoint-to-first-MIDI values are deterministic scheduler replay rather than direct live-performance measurements.
+SCC does not characterize scheduler responsiveness. The replay therefore uses local A6 timings captured when \texttt{StreamingAMTGenerator.generate\_events} first yielded a \texttt{GeneratedEvent}. The historical CSV field is named \path{first_token_latency_sec}, but the timed unit is the first complete event object, not a raw vocabulary token and not a transmitted MIDI message. The machine is a Lenovo 82JQ running 64-bit Windows 11 Pro, with an AMD Ryzen 7 5800H (8 cores/16 logical processors), 15.86 GiB physical RAM, and an NVIDIA GeForce RTX 3060 Laptop GPU with 6144 MiB VRAM. L0 starts decoding at endpoint commit and uses $R_{\mathrm{first}}(0)=\max(80,\tau_{\mathrm{first}})$ ms. L1 overlaps decoding only with the 150 ms confirmation interval and uses Equation~\eqref{eq:perceived-latency-preload}; no additional 250 ms horizon exists. A readiness-target miss occurs when $\tau_{\mathrm{first}}-H>80$ ms. No trial-row hypothesis test is reported because L0 and L1 are deterministic transforms of the same observed timings.
 
-The primary latency metric is endpoint-to-first-MIDI latency:
+The reported quantity is the commit-anchored first-generated-event readiness lower bound:
 \begin{equation}
-L_{\mathrm{first}} = t_{\mathrm{first\_midi\_out}} - t_{\mathrm{endpoint\_commit}}.
+R_{\mathrm{first}}(H)=\max\left(B,\tau_{\mathrm{first}}-H\right).
 \end{equation}
-This metric measures the delay between the confirmed phrase endpoint and the first scheduled MIDI response event.
+It is an earliest modeled release target relative to endpoint commit. Because the A6 duration/style path may retain the phrase before queueing, and because no queue-send, operating-system MIDI-send, host-receive, or audio-onset timestamp was retained, actual endpoint-to-MIDI and endpoint-to-audio latency are unmeasured and can only be no smaller than this bound under the modeled path.
 
 \begin{table}[htbp]
 \centering
-\caption{Runtime latency comparison between preload-off and preload-on conditions}
+\caption{First-event readiness replay; means and target-miss intervals aggregate over Calls}
 \label{tab:latency-condition}
 \small
 \setlength{\tabcolsep}{4pt}
-\begin{tabular}{lrrrrrr}
+\begin{tabular}{lrrL{0.27\linewidth}rrL{0.20\linewidth}}
 \toprule
-Condition & Samples & Mean ms & P50 ms & P95 ms & P99 ms & Underrun \\
+Condition & Rows & Calls & Mean lower bound ms (95\% CI) & P50 & P95 & Target miss (95\% CI) \\
 \midrule
-L0 preload off & 9000 & 161.303 & 136.455 & 323.521 & 479.574 & 20.744\% \\
-L1 preload on & 9000 & 91.721 & 80.000 & 173.521 & 329.574 & 5.244\% \\
+L0 preload off & 9000 & 100 & 101.543 [93.111, 111.436] & 80.000 & 243.521 & 20.744\% [16.167, 25.767] \\
+L1 preload on & 9000 & 100 & 86.545 [82.798, 91.020] & 80.000 & 93.521 & 5.244\% [2.611, 8.322] \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{table}[htbp]
 \centering
-\caption{Paired latency reduction from speculative preload}
+\caption{Cluster-aware paired reductions in the modeled readiness lower bound}
 \label{tab:preload-paired-reduction}
-\small
-\setlength{\tabcolsep}{5pt}
-\begin{tabular}{lrrc}
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{L{0.20\linewidth}rL{0.15\linewidth}rL{0.15\linewidth}r}
 \toprule
-Comparison & Paired samples & Mean reduction ms & 95\% CI \\
+Comparison & Call mean & Call 95\% CI & Source mean & Source 95\% CI & Positive Calls \\
 \midrule
-L1 preload on vs. L0 preload off & 9000 & 69.582 & [68.865, 70.263] \\
+Readiness-bound reduction (ms) & 14.999 & [10.152, 20.494] & 11.973 & [7.935, 16.871] & 98/100 \\
+Readiness-target-miss reduction (percentage points) & 15.500 & [12.489, 18.900] & 14.745 & [11.897, 18.006] & 97/100 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -809,123 +949,139 @@ L1 preload on vs. L0 preload off & 9000 & 69.582 & [68.865, 70.263] \\
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.92\linewidth]{figures/preload_latency_chart.pdf}
-\caption{Scheduler-replay comparison with preload off and with 150 ms of pre-commit overlap. The left panel reports mean and P95 endpoint-to-first-MIDI latency; the right panel reports buffer-underrun rate.}
+\caption{Readiness-replay comparison with preload off and with 150 ms of pre-commit overlap. The left panel reports the modeled first-generated-event readiness lower bound with Call-cluster intervals and descriptive P95; the right panel reports readiness-target misses. No MIDI-send or audio-onset time is measured.}
 \label{fig:preload-latency-chart}
 \end{figure}
 
-Tables~\ref{tab:latency-condition} and~\ref{tab:preload-paired-reduction}, together with Figure~\ref{fig:preload-latency-chart}, show the replay results. All 9000 paired differences favor preload; an exact two-sided paired sign test gives $p<10^{-6}$. Preload reduces mean endpoint-to-first-MIDI latency from 161.303 ms to 91.721 ms, reduces P95 from 323.521 ms to 173.521 ms, and lowers buffer-underrun rate from 20.744\% to 5.244\%. This improves scheduled post-endpoint responsiveness by moving up to 150 ms of decoding into the candidate-confirmation interval; it does not reduce intrinsic AMT decoding time.
+Tables~\ref{tab:latency-condition} and~\ref{tab:preload-paired-reduction}, together with Figure~\ref{fig:preload-latency-chart}, show the replay results. Preload reduces the mean first-generated-event readiness lower bound from 101.543 ms to 86.545 ms; the Call-level mean reduction is 14.999 ms [10.152, 20.494]. The descriptive P95 falls from 243.521 ms to 93.521 ms, and the readiness-target-miss rate falls from 20.744\% to 5.244\%. This moves at most 150 ms of decoding into the candidate-confirmation interval; it does not reduce intrinsic AMT decoding time and is not evidence of faster MIDI or audio output. Because no per-event readiness timestamps were retained, Equation~\eqref{eq:streaming-buffer-condition} and true mid-phrase starvation cannot be evaluated from this replay.
 
 \subsection{Dataset Source Robustness and Failure-Case Analysis}
 \label{subsec:robustness-failure}
 
-Table~\ref{tab:source-origin-summary} applies the harmonized evaluator to source groups. The original Call50 subset remains easier than the added POP909 subset.
+Table~\ref{tab:source-origin-summary} applies the harmonized evaluator to source groups. The original Call50 subset has a higher pooled SCC than the added POP909 subset; the table is descriptive and does not treat repeated response rows as independent inputs.
 
 \begin{table}[htbp]
 \centering
-\caption{Performance by source dataset and origin}
+\caption{Descriptive pooled SCC by source dataset and origin}
 \label{tab:source-origin-summary}
-\begin{tabular}{llrr}
+\small
+\begin{tabular}{llrrrr}
 \toprule
-Grouping field & Value & Samples & Mean SCC \\
+Grouping field & Value & Rows & Calls & Sources & Mean SCC \\
 \midrule
-source dataset & \texttt{calls\_50} & 13500 & 0.702215 \\
-source dataset & \texttt{POP909} & 13500 & 0.661958 \\
+source dataset & \texttt{calls\_50} & 13500 & 50 & 47 & 0.702215 \\
+source dataset & \texttt{POP909} & 13500 & 50 & 42 & 0.661958 \\
 \midrule
-origin & \texttt{artificial\_stress} & 2700 & 0.725250 \\
-origin & \texttt{real\_public\_dataset} & 10800 & 0.696456 \\
-origin & \texttt{public\_midi\_extract} & 13500 & 0.661958 \\
+origin & \texttt{artificial\_stress} & 2700 & 10 & 10 & 0.725250 \\
+origin & \texttt{real\_public\_dataset} & 10800 & 40 & 37 & 0.696456 \\
+origin & \texttt{public\_midi\_extract} & 13500 & 50 & 42 & 0.661958 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-This difference does not indicate failure on POP909; it shows that the added public excerpts are harder. The POP909 subset has a higher average maximum interval, 12.093 versus 8.360 for \texttt{calls\_50}, and a higher average note count, 15.905 versus 13.588, increasing the difficulty of response planning and duration matching.
+``Sources'' counts unique source clusters within each row; row counts need not sum to 87 because a POP909 song can contribute excerpts to both construction subsets. This difference does not indicate failure on POP909 or identify a causal difficulty effect. The POP909 subset also has a higher average maximum interval, 12.093 versus 8.360 for \texttt{calls\_50}, and a higher average note count, 15.905 versus 13.588. These are plausible correlates of the lower pooled SCC, but source construction, category mix, and other features are confounded.
 
-Category extremes in Table~\ref{tab:category-summary} similarly identify sparse and rubato inputs as difficult under SCC.
+Category extremes in Table~\ref{tab:category-summary} show where pooled SCC is higher or lower; several rows contain only one Call and therefore support case description, not category-level inference.
 
 \begin{table}[htbp]
 \centering
-\caption{Examples of high- and low-scoring categories}
+\caption{Descriptive examples of high- and low-SCC categories}
 \label{tab:category-summary}
 \small
-\begin{tabular}{L{0.35\linewidth}rrL{0.31\linewidth}}
+\begin{tabular}{L{0.28\linewidth}rrrL{0.27\linewidth}}
 \toprule
-Category & Samples & Mean SCC & Interpretation \\
+Category & Rows & Calls & Sources & Mean SCC / observed pattern \\
 \midrule
-\texttt{pentatonic\_clear\_motif} & 270 & 0.775829 & Clear motif and stable scale structure. \\
-\texttt{modal\_question} & 270 & 0.774319 & Clear question-like phrasing and cadential target. \\
-\texttt{syncopation} & 270 & 0.753149 & Distinct rhythmic profile remains structurally manageable. \\
+\texttt{pentatonic\_clear\_motif} & 270 & 1 & 1 & 0.775829; single-Call case. \\
+\texttt{modal\_question} & 270 & 1 & 1 & 0.774319; single-Call case. \\
+\texttt{syncopation} & 270 & 1 & 1 & 0.753149; single-Call case. \\
 \midrule
-\texttt{expressive\_rubato} & 2160 & 0.632543 & Free timing increases rhythm and duration-matching difficulty. \\
-\texttt{sparse\_short} & 1350 & 0.620874 & Low input information makes structural filling less stable. \\
-\texttt{sparse\_cadential} & 270 & 0.618459 & Sparse cadential fragments often lead to short or weak responses. \\
+\texttt{expressive\_rubato} & 2160 & 8 & 6 & 0.632543; lowest multi-source row shown. \\
+\texttt{sparse\_short} & 1350 & 5 & 1 & 0.620874; five excerpts from one source. \\
+\texttt{sparse\_cadential} & 270 & 1 & 1 & 0.618459; single-Call case. \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-For A6, event repair occurs in 3712/9000 samples (41.24\%; 5263 repaired events), but whole-phrase motif fallback occurs zero times. Reporting the former as a ``fallback rate'' caused the earlier 41.46\% ambiguity; the public schema now stores \texttt{event\_repair\_count} and \texttt{motif\_fallback\_used} separately.
+For A6, event repair occurs in 3712/9000 rows (41.24\%; 5263 repaired events), but whole-phrase motif fallback occurs zero times. Reporting the former as a fallback rate caused the earlier ambiguity; the schema now stores \texttt{event\_repair\_count} and \texttt{motif\_fallback\_used} separately. Event repair is not independently randomized or ablated, so repaired-versus-unrepaired score differences are confounded by the cases that triggered repair.
 
-\subsection{Anonymous Blind Listening Study}
-\label{subsec:blind-listening-study}
+External validity is narrow. Apart from 10 artificial stress Calls, the benchmark is POP909-derived and evaluated under fixed C-major-pentatonic targets. The AMT checkpoint was trained on Lakh MIDI, and no corpus-overlap or near-duplicate audit against POP909 was performed; training contamination therefore cannot be ruled out. Grouping repeated excerpts into 87 source clusters addresses dependence within Call100, not possible overlap with pretraining data or generalization to other performers, instruments, styles, or live timing.
 
-\paragraph{Stimuli and procedure.}
-The subjective experiment used a single-stimulus, fully randomized design. Each participant rated eight anonymous piano-rendered clips constructed from four call contexts: two POP909 excerpts and two artificial stress cases. Within each context, both conditions used the same call and only the response differed. Two contexts compared raw AMT (A0) with controlled AMT (A4), while two compared the motif-transformation baseline with full controlled AMT (A6). A4 cumulatively activates prompt cleaning, repetition suppression, duration matching, and a fallback-capable branch; A6 additionally activates the style and full-theory controls. All responses used the \texttt{pentatonic\_conservative} preset. For each call--condition combination, the displayed response was the trial whose SCC was closest to the median of 15 trials. Every selected response had \texttt{event\_repair\_count}=0 and \texttt{motif\_fallback\_used}=0, so no listening stimulus contained event repair or whole-phrase replacement.
+\subsection{Status of Human Evaluation}
+\label{subsec:human-evaluation-status}
 
-Each participant evaluated all eight clips in an independently randomized order. The interface disclosed neither model identity nor condition label and showed no MIDI visualization. For each item, listeners could play synchronized renderings of the full call plus response, the call alone, and the response alone. They then answered four mandatory questions about (1) transition fluency, (2) phrase development and closure, (3) rhythmic and musical correspondence with the call, and (4) overall acceptability. Each question used a forced-choice four-point scale from 1 to 4, with no neutral option. Playback counts, presentation position, per-item dwell time, and total study duration were recorded.
+No human-participant data are analyzed or reported in this manuscript. An earlier formative online listening exercise is excluded from the evidence package because it did not have prospective institutional approval or exemption and did not enforce adult eligibility. No retrospective approval is claimed, and its aggregate or participant-level outcomes must not be interpreted as an ethically governed perceptual evaluation. A future listening or live-performance study requires prospective review or a documented institutional determination before recruitment, together with age eligibility, consent, withdrawal, data-retention, and de-identification procedures.
 
-\paragraph{Participants and quality control.}
-Recruitment was anonymous and conducted through WeChat using the mainland-China deployment. Participants acknowledged that their anonymous ratings would be used for academic analysis before starting, and no direct personal identifiers were requested. The frozen export contained 44 complete submissions and 1,408 rating rows, exactly 32 rows per submission. Before unblinding, two submissions were excluded because at least one item had no recorded playback, and the later of two submissions sharing one session identifier was removed. This left 41 participants and 1,312 ratings for the primary analysis. One participant used the same score throughout; this response was retained under the locked rule, and excluding it in sensitivity analysis did not change either conclusion. Among included participants, 15 reported 0--2 years, 17 reported 3--5 years, and 9 reported more than 5 years of musical experience; 25 reported high and 16 low familiarity with improvisation. Listening devices were headphones ($n=23$), phones ($n=13$), and speakers ($n=5$). Median completion time was 322 seconds.
-
-\paragraph{Analysis.}
-For each participant and comparison family, ratings were averaged over the four questions and two matched call contexts. Primary effects are paired participant-level mean differences, defined as controlled minus comparator. Confidence intervals were obtained with 50,000 participant-bootstrap draws, and two-sided $p$ values with 200,000 sign-flip permutations. Cohen's $d_z$ summarizes paired effect size. A secondary linear model adjusted for presentation index and call-pair fixed effects while including participant fixed effects and participant-clustered standard errors. The four questions showed high internal consistency across participant-item observations (Cronbach's $\alpha=0.939$).
-
-\begin{table}[htbp]
-\centering
-\caption{Blind-listening results on a four-point scale ($N=41$). Differences are controlled minus comparator; confidence intervals use participant bootstrap resampling.}
-\label{tab:blind-listening-results}
-\scriptsize
-\begin{tabular}{L{0.25\linewidth}rrL{0.25\linewidth}r}
-\toprule
-Comparison & Comparator & Controlled & Difference (95\% CI) & $p_{\mathrm{perm}}$ \\
-\midrule
-Controlled A4 $-$ raw AMT & 2.945 & 2.787 & $-0.159$ [$-0.326$, 0.006] & 0.0785 \\
-Controlled A6 $-$ motif baseline & 2.256 & 1.909 & $-0.348$ [$-0.534$, $-0.162$] & 0.0009 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\paragraph{Results.}
-Table~\ref{tab:blind-listening-results} does not support a perceptual advantage for controlled AMT on the selected stimuli. In the A4 comparison, controlled AMT was rated 0.159 points below raw AMT, but the interval included zero ($d_z=-0.289$, $p=0.0785$). After adjustment for presentation position and matched call pair, the estimated difference remained similar at $-0.164$ (95\% CI [$-0.352$, 0.025], approximate $p=0.090$). The correct interpretation is uncertainty rather than equivalence or superiority.
-
-In the A6 comparison, controlled AMT was rated 0.348 points below the motif baseline (95\% CI [$-0.534$, $-0.162$], $d_z=-0.570$, $p=0.0009$). The adjusted estimate was $-0.349$ (95\% CI [$-0.567$, $-0.131$], approximate $p=0.0017$), preserving the conclusion after accounting for order and call pair. Ratings increased by approximately 0.038 points per later presentation position (95\% CI [0.009, 0.068]), which justifies retaining order in the adjusted model but does not explain the condition contrast. Excluding the one straight-line participant yielded nearly identical differences ($-0.163$ and $-0.356$).
-
-Across the eight fixed stimuli, SCC and mean human rating showed little descriptive alignment (Pearson $r=-0.054$; Spearman $\rho=0.071$). With only eight selected stimuli this is exploratory. Structural compliance improves over raw AMT at scale, but these exemplars do not show corresponding listener preference; the motif baseline is preferred to A6 on this restricted test.
-
-\subsection{Interpretation and Scope of Evaluation}
+\section{Discussion and Threats to Validity}
 \label{subsec:subjective-evaluation-scope}
 
-The endpoint benchmark uses file-end proxies rather than human boundaries, motif fallback never activates in A0--A6, and scheduler replay does not measure faster AMT inference. The blind study contains 41 analyzed participants from one Chinese social channel, four contexts, one preset, and eight fixed, repair-free stimuli. No live co-performance user study is included, so perceived turn taking and broader musical usefulness remain unverified.
+\paragraph{Construct validity.}
+The endpoint benchmark uses a final-Note-Off proxy while the detector times silence from the last Note-On. SCC measures rules that the control layers themselves target. The feature-association audit adds contour, interval-2gram, and onset-profile contingency against same-condition mismatches, but it does not measure harmonic fit, semantic answer function, or human-perceived correspondence. The scheduler replay estimates a first-generated-event readiness lower bound, not MIDI transmission, audio onset, or full-stream starvation. These outcomes should remain separate: none is a proxy for perceived conversational timing or musical quality.
+
+\paragraph{Internal and module validity.}
+The A0--A6 ablation is cumulative and order-dependent; stepwise increments are conditional on earlier switches. A4 never activates in Call100, and event repair is common but not independently randomized. Speculative-preload values are deterministic replays of observed decoding times, not end-to-end audio-onset measurements. These facts prevent causal claims about fallback quality, standalone repair benefit, or live latency.
+
+\paragraph{Statistical and external validity.}
+For candidate, module, feature-association, and scheduler analyses, cluster-aware inference treats 100 Calls as the primary units and 87 sources as sensitivity units; the endpoint analysis has only the 100-Call interval. Association jackknives additionally rebuild the shared mismatch bank. These changes correct trial-row pseudoreplication but do not turn Call100 into a held-out test. The benchmark is dominated by POP909 and uses one checkpoint, one hardware configuration, and one absolute C-major output target. Only 36 Calls are labeled C major, so tonal compatibility with the Call is unknown and may be poor. Overlap with the checkpoint's Lakh-based training data was not audited.
+
+\paragraph{Human evidence and ethics.}
+The manuscript deliberately excludes the earlier formative listening data and makes no human-participant claim. It also contains no human-labeled phrase boundaries or live co-performance user study. Consequently, perceived turn taking, performer adaptation, boundary validity, and broader musical usefulness remain open. Any future human evaluation must begin only after prospective institutional review or a documented determination that review is not required.
 
 \section{Conclusion}
 \label{sec:conclusion-future-work}
 
-The primary contribution is an external method that places adaptive turn detection, phrase control, and speculative scheduling around a frozen offline AMT. Direct endpoint replay shows a precision--latency trade-off rather than universal segmentation accuracy. Shared-batch evaluation raises SCC from 0.560968 to 0.732610 and non-style structure from 0.558971 to 0.676704; A5's larger style gain is explicitly separated from that evidence. A 150 ms overlap lowers replayed scheduler latency from 161.303 to 91.721 ms, but the listening study does not establish perceptual superiority. Future work should use human-labeled phrase boundaries, live interaction, and broader pre-registered listening samples.
+The contribution is a reproducible external layer for endpoint candidates, cancellation, phrase controls, and speculative scheduling around a frozen AMT checkpoint. First-commit file replay exposes an endpoint precision--delay trade-off under a non-human proxy. Cluster-aware analysis shows higher declared output compliance for controlled than raw AMT, while the motif baseline remains stronger on SCC; because the score is targeted by the controls, this is a manipulation check rather than musical-quality evidence. A matched--mismatched feature audit adds limited Call conditioning evidence and reveals a trade-off: control increases onset-profile association but reduces interval-2gram association relative to raw AMT, with no positive contour evidence. A 150 ms overlap lowers the modeled commit-anchored first-generated-event readiness bound in replay, but MIDI-send, full-stream, and live audio latency remain unmeasured. Human-labeled boundaries, a held-out multi-source benchmark, key-relative/harmonic correspondence metrics, randomized repair/fallback stress tests, and prospectively reviewed human evaluation are required before stronger interaction or perceptual claims.
 
 \section*{Data and Code Availability}
 \label{sec:data-code-availability}
 
-The research code, paper source, trial-level structural metrics, endpoint and latency summaries, aggregate listening results, and release documentation are available in the \href{https://github.com/MickeyWzt/real-time-midi-call-response}{public GitHub repository}. The reproducibility archive corresponding to this manuscript is \href{https://github.com/MickeyWzt/real-time-midi-call-response/releases/tag/v1.1.0}{GitHub release v1.1.0}. Zenodo archives the release under the stable \href{https://doi.org/10.5281/zenodo.20838083}{all-versions concept DOI}; the release page links its exact version DOI. A browsable \href{https://mickeywzt.github.io/real-time-midi-call-response/}{project page} is also available.
+The research code, paper source, trial-level structural and Call--response feature-association metrics, first-commit endpoint outputs, scheduler-replay outputs, and release documentation supporting this manuscript are identified by \href{https://github.com/MickeyWzt/real-time-midi-call-response/releases/tag/v1.2.0}{GitHub release v1.2.0}. Zenodo archives this release family under the stable \href{https://doi.org/10.5281/zenodo.20838083}{all-versions concept DOI}; the concept record links the available version-specific deposits. The \href{https://github.com/MickeyWzt/real-time-midi-call-response}{public GitHub repository} and a browsable \href{https://mickeywzt.github.io/real-time-midi-call-response/}{project page} provide the maintained code and documentation.
 
-The public archive includes the implementation, exact score specification, path-redacted trial metrics, source hashes, statistical summaries, and tests needed to inspect the reported structural, endpoint, scheduling, and aggregate listening results. Participant-level response exports, exclusion identifiers, private answer keys, and deployment credentials are retained privately. Large or license-sensitive runtime artifacts, including pretrained model weights, third-party audio tools, sample libraries, source datasets, and generated per-run MIDI batches, are not redistributed and should be obtained separately under their respective licenses.
+The v1.2.0 source archive includes the derived structural and feature-association tables, published MIDI filenames and SHA-256 values, endpoint and scheduler outputs, provenance records, and the scripts used for validation and aggregation. It does not include the generated response MIDI, local generation answer keys, pretrained model weights, source-Call MIDI, third-party audio tools, or sample libraries. The released tables and hashes permit auditing of the reported aggregations and checking locally retained evaluated files against the published identifiers, but they are not a complete from-scratch reproduction bundle. Recomputing the Call--response association features from MIDI therefore requires locally regenerating or otherwise obtaining the response batch and source Calls; regeneration uses the versioned code, fixed configurations and seeds, checkpoint revision, and source-Call manifests, but byte identity can remain runtime-dependent. The current manuscript evidence package excludes human-participant data. Earlier repository releases may contain aggregate artifacts from the formative listening exercise; those artifacts are outside the present evidence package and must not be treated as a governed human-subject result. Participant-level exports, exclusion identifiers, private human-study answer keys, and deployment credentials are not redistributed, and third-party materials must be obtained from their original providers under the applicable licenses.
 
 
 \section*{AI Tool Usage Statement}
 \label{sec:ai-tool-usage}
 
-AI tools were used in this project as auxiliary research, writing, and programming support. This disclosure refers to general-purpose AI assistance used during project preparation; the autoregressive Transformer system evaluated in this paper is part of the research object itself and is described separately in the methodology and experiments.
+OpenAI ChatGPT and Codex were used through the ChatGPT web and Codex desktop interfaces during June--September 2026 for auxiliary code inspection, debugging, small validation and analysis procedures, English editing, LaTeX formatting, and summarization of author-verified CSV/log outputs. The hosted interfaces did not consistently expose a stable model-version identifier, so no exact model build is asserted. The AMT checkpoint evaluated in this paper is the research object and is described separately.
 
-The authors used OpenAI ChatGPT/Codex in three main places. First, during software development, AI assistance was used to inspect Python and MIDI-processing code, identify possible implementation errors, debug LaTeX or Python issues, and draft small validation or analysis procedures. All code execution, experiment running, and result validation were performed and checked by the authors. Second, during manuscript preparation, AI assistance was used to improve English wording, reorganize paragraphs, refine LaTeX formatting, and make tables and figure descriptions clearer. Third, during result reporting, AI assistance was used to help summarize verified CSV and log outputs and convert checked numerical results into concise academic prose.
+AI tools were not used to fabricate data, supply unchecked references, or make final research decisions. The authors executed the code and checked numerical claims, tables, figures, citations, and conclusions against the archived outputs and source. AI assistance does not replace the excluded human evaluation or any future institutional review.
 
-AI tools were not used to fabricate experimental data, replace the Call100 or blind-listening evaluations, make unsupervised final research decisions, or generate references accepted without checking. All numerical claims, tables, figures, citations, and final conclusions were reviewed by the authors against the frozen experiment outputs, source code, and cited literature.
+\appendix
+\section{Implementation Parameter and Edge-Case Checklist}
+\label{app:parameter-checklist}
+
+Tables~\ref{tab:parameter-presets} and~\ref{tab:global-parameters} list the generation, endpoint, and scheduler settings. Table~\ref{tab:evaluator-parameters} completes the evaluator constants used by \texttt{structural\_compliance\_v1.1}. These values are fixed implementation parameters, not estimates learned from Call100.
+
+\begin{table}[htbp]
+\centering
+\caption{Evaluator reference and normalization constants}
+\label{tab:evaluator-parameters}
+\scriptsize
+\begin{tabular}{L{0.34\linewidth}L{0.56\linewidth}}
+\toprule
+Item & Value \\
+\midrule
+Tonal reference & MIDI root 60 (C), major pentatonic; stable degrees \{0,4,7\}; cadence root score 1.00 and fifth score 0.85. \\
+Metric meter/grid & 4 beats per bar; 16 groove slots per bar; strong positions at beats 1 and 3 with evaluator tolerance $1/16$ beat. \\
+Intervals/rhythm & Stepwise threshold $\leq3$ semitones; large interval $>7$ semitones; qualified note $\geq0.125$ beat; duration tolerance 0.065 beat. \\
+Pitch diversity & Pitch-class entropy target 2.0 with tolerance 0.65; unique pitch-class target 5 with tolerance 2. \\
+Compression & zlib/raw symbolic ratio target 0.65 with tolerance 0.35. \\
+SCC weights & Tonality 0.22; rhythm 0.20; interval 0.18; repetition 0.16; pitch diversity 0.14; compression 0.10. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Exact Evaluator Algorithm}
+\label{app:evaluator-specification}
+
+The evaluator merges MIDI tracks, applies tempo changes while accumulating absolute ticks and seconds, and pairs Note-On/Note-Off messages by channel and pitch. A repeated positive-velocity Note-On for an already-active channel/pitch pair replaces the stored onset; unmatched Note-Off messages and notes still active at end of file are discarded. Completed durations are clamped to at least one tick, and notes are sorted by $(\mathrm{onset\ tick},\mathrm{pitch})$ with Python's stable sort preserving completion order for an exact tie. Consequently, simultaneous notes are traversed in ascending pitch order. For $n$ notes, all interval, stepwise, large-jump, and consecutive-repeat fractions use denominator $\max(1,n-1)$. PSR is the fraction of pitches whose C-relative pitch class is in $\{0,2,4,7,9\}$. Cad is 1.00 for a final C, 0.85 for G, 0.70 for another stable degree in $\{0,4,7\}$, 0.45 for another allowed pentatonic degree, and zero otherwise. SB selects notes whose within-bar onset is within $\max(1,\lfloor\mathrm{TPB}/16\rfloor)$ ticks of beats 1 or 3; it is the stable-degree fraction among those notes and equals one when no onset meets the strong-beat test.
+
+QN is the note fraction with duration at least 0.125 beat. QRF is the note fraction within 0.065 beat (inclusive) of any duration in $\{0.125,0.25,0.375,0.5,0.75,1,1.5,2,3,4\}$. For G, each occupied bar is represented by a 16-slot binary onset vector. An onset at tick position $r$ in a bar of $b$ ticks maps to $\operatorname{round}(16r/b)\bmod16$, using Python ties-to-even rounding. G is the mean of $1-d_H/16$ over successive occupied bar indices; it equals one for a single occupied bar and zero only when no bar exists. $H_{\mathrm{pc}}=-\sum_c p_c\log_2p_c$, $U_{\mathrm{pc}}$ counts distinct pitch classes, CPR is the fraction of adjacent equal pitches, and $L_{\mathrm{run}}$ is the longest consecutive equal-pitch run (one for a nonempty single-note response).
+
+For compression, each sorted note is serialized as the UTF-8 text \path{round(onset_ticks/TPB,3):round(duration_ticks/TPB,3):pitch}; items are joined by one ASCII space in evaluation order. $Z$ is \texttt{len(zlib.compress(raw))/len(raw)} using the Python zlib default compression settings. Python's ties-to-even rounding and number-to-string conversion are therefore part of the score definition. The archived generation/evaluation provenance did not record Python or zlib versions; a current revalidation under Python 3.12.10 and zlib runtime 1.3.1 reproduced the stored scores within the tolerance reported in Section~\ref{subsec:evaluation-integrity}, but does not identify the original runtime. A zero-note response bypasses all submetric calculations and receives zero for SCC and both component-family scores. For a single note, the transition numerator is zero and denominator is one; G and no-strong-beat SB are one. These conventions, the constants in Table~\ref{tab:evaluator-parameters}, and Equation~\eqref{eq:scc} fully specify \texttt{structural\_compliance\_v1.1} apart from that archived runtime-version gap.
+
+The remaining implementation edge cases are as follows. If the clustered-onset count is $K_{\mathrm{on}}<2$, or if $u_{K_{\mathrm{on}}}\leq u_1$, endpoint density is $\mu_{\min}=0.25$ s$^{-1}$. If duration shaping receives one note, $i/\max(1,n-1)=0$. With zero generated events, the ablation runner bypasses duration shaping: A3 retains the empty response for evaluation, whereas A4--A6 enter their variant-specific motif-fallback path; the shaping helper itself returns an empty list, zero raw/adjusted durations, and unit scale if called directly. Endpoint replay terminates after its first Commit; a premature first Commit cannot be repaired by a later decision. A4 fallback retains free/chromatic style, A5 applies only the base style projection, and A6 adds theory refinements. The Note-On detector does not track active-note or sustain-pedal state, so held sonorities remain an explicit limitation rather than an implicit boundary rule.
 
 
 \bibliographystyle{plainnat}

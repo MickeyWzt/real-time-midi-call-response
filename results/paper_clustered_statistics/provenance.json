@@ -1,0 +1,25 @@
+{
+  "bootstrap_iterations": 50000,
+  "seed": 20260815,
+  "independent_calls": 100,
+  "source_clusters": 87,
+  "source_cluster_definition": "77 POP909 song IDs plus 10 artificial calls",
+  "inputs": {
+    "candidate": {
+      "path": "results/call100_harmonized_evaluation/harmonized_trial_metrics.csv",
+      "sha256": "a6af03f6629535ddd317f680f3d0f74edcbaeb9766469aa9ae95af00e64d813e"
+    },
+    "ablation": {
+      "path": "results/call100_ablation_latency/ablation_trial_metrics.csv",
+      "sha256": "218837c26760f23551b2e415cdb7c55af426817246518c8f6f39414de1007d97"
+    },
+    "latency": {
+      "path": "results/call100_ablation_latency/latency_log_all_trials.csv",
+      "sha256": "d4f736c7e467f80c4cc7f677521f0bd137191704746237318aac77584af0a337"
+    },
+    "manifest": {
+      "path": "results/call100_dataset/call100_manifest_public.csv",
+      "sha256": "4117c304d1a5e00c1bb0979d9831410e969f5f1aef7863deec46a4f0581a649c"
+    }
+  }
+}

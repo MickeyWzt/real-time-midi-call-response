@@ -25,6 +25,12 @@ CALLS_DIR = OUT_DIR / "calls"
 
 DATASET_VERSION = "call100_public_final_v1"
 
+
+def portable_filename(path: Path) -> str:
+    """Return only the filename for manifest fields distributed publicly."""
+
+    return path.name
+
 FIELDS = [
     "call_id",
     "origin",
@@ -986,8 +992,8 @@ def old_call_rows() -> Tuple[List[Dict[str, str]], set]:
                     "category": source_row.get("category", "existing_call50"),
                     "sub_category": "copied_from_call50",
                     "description": source_row.get("description", "Existing Call50 call copied into Call100."),
-                    "midi_path": str(dst),
-                    "source_file": str(src),
+                    "midi_path": portable_filename(dst),
+                    "source_file": portable_filename(src),
                     "track_index": source_row.get("track_index", ""),
                     "track_name": source_row.get("track_name", ""),
                     "start_sec": "0",
@@ -1032,8 +1038,8 @@ def public_call_rows(selected: Sequence[Tuple[str, Candidate]]) -> List[Dict[str
                     f"{cand.source_dataset} {cand.track_name} segment from {cand.source_group}; "
                     f"selected for {category}."
                 ),
-                "midi_path": str(dst),
-                "source_file": str(cand.source_file),
+                "midi_path": portable_filename(dst),
+                "source_file": portable_filename(cand.source_file),
                 "track_index": fmt(cand.track_index, 0),
                 "track_name": cand.track_name,
                 "start_sec": fmt(cand.start_sec),
@@ -1057,7 +1063,7 @@ def public_call_rows(selected: Sequence[Tuple[str, Candidate]]) -> List[Dict[str
 def write_manifest(rows: Sequence[Dict[str, str]]) -> Path:
     path = OUT_DIR / "call100_manifest.csv"
     with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDS)
+        writer = csv.DictWriter(f, fieldnames=FIELDS, lineterminator="\n")
         writer.writeheader()
         for row in rows:
             writer.writerow({field: row.get(field, "") for field in FIELDS})

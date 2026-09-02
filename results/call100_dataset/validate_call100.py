@@ -47,6 +47,19 @@ def read_rows() -> list[dict[str, str]]:
         return list(csv.DictReader(f))
 
 
+def resolve_manifest_midi_path(value: str) -> Path:
+    """Resolve a generated filename against the builder's local calls folder."""
+
+    declared = Path(value)
+    candidates = [declared]
+    if not declared.is_absolute():
+        candidates.extend((OUT_DIR / declared, OUT_DIR / "calls" / declared.name))
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[-1]
+
+
 def midi_note_counts(path: Path) -> tuple[int, int]:
     mid = mido.MidiFile(path)
     non_drum = 0
@@ -88,7 +101,7 @@ def validate() -> int:
     seen_fps: dict[str, str] = {}
     for row in rows:
         call_id = row.get("call_id", "<missing>")
-        midi_path = Path(row.get("midi_path", ""))
+        midi_path = resolve_manifest_midi_path(row.get("midi_path", ""))
         if not midi_path.exists():
             fail(errors, f"{call_id}: midi_path missing: {midi_path}")
             continue

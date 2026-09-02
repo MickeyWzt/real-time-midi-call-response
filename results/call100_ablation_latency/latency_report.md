@@ -1,21 +1,16 @@
-# Call100 Runtime Latency Logging and Scheduler Replay
+# Call100 First-Event Readiness Replay
 
-## Design
-
-- L0 preload off: inference starts at endpoint commit.
-- L1 preload on: decoding may overlap the candidate-confirmation interval by up to `150 ms`.
-- The logged inference timings come from actual local AMT decoding during the A6 full-controlled ablation runs.
-- Endpoint-to-first-MIDI timing is a deterministic scheduler replay with the configured micro-buffer.
+The source timing is elapsed local AMT inference until the first complete `GeneratedEvent` is yielded; its legacy field name is `first_token_latency_sec`. The commit-anchored quantity `max(B, C1-H)` is an earliest readiness/release lower bound, not measured MIDI-send, host-receive, or audio-onset latency. Full-stream underrun is also unmeasured.
 
 ## Summary By Condition
 
-| condition | sample_count | mean_latency_ms | p50_latency_ms | p95_latency_ms | p99_latency_ms | max_latency_ms | underrun_rate | mean_first_token_latency_ms | mean_total_generation_ms |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| L0_preload_off | 9000 | 161.302711 | 136.455450 | 323.520665 | 479.574320 | 815.510000 | 0.207444 | 81.302711 | 1655.312037 |
-| L1_preload_on | 9000 | 91.720642 | 80.000000 | 173.520665 | 329.574320 | 665.510000 | 0.052444 | 81.302711 | 1655.312037 |
+| condition | sample_count | mean_first_event_readiness_lower_bound_ms | p50_first_event_readiness_lower_bound_ms | p95_first_event_readiness_lower_bound_ms | startup_deadline_miss_rate | mean_first_generated_event_latency_ms | mean_total_generation_ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| L0_preload_off | 9000 | 101.543478 | 80.000000 | 243.520665 | 0.207444 | 81.302711 | 1655.312037 |
+| L1_preload_on | 9000 | 86.544816 | 80.000000 | 93.520665 | 0.052444 | 81.302711 | 1655.312037 |
 
-## Preload Comparison
+## Paired Preload Comparison
 
-| comparison | paired_sample_count | mean_latency_reduction_ms | ci95_low | ci95_high | positive_pairs | negative_pairs | tied_pairs | p_two_sided_sign_test |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| L1_preload_on_vs_L0_preload_off | 9000 | 69.582069 | 68.864876 | 70.263268 | 9000 | 0 | 0 | &lt;0.000001 |
+| comparison | paired_sample_count | mean_readiness_lower_bound_reduction_ms | positive_pairs | negative_pairs | tied_pairs | inference |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| L1_preload_on_vs_L0_preload_off | 9000 | 14.998662 | 1867 | 0 | 7133 | deterministic replay; no hypothesis test |

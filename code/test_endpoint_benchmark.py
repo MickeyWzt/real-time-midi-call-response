@@ -43,15 +43,17 @@ class EndpointBenchmarkTests(unittest.TestCase):
         detector.observe_note_on(62, timestamp=0.40)
         self.assertEqual(len(decisions), 1)
 
-    def test_metric_bundle_counts_extra_decision_as_false_positive(self) -> None:
+    def test_metric_bundle_counts_premature_first_commit_as_fp_and_fn(self) -> None:
         rows = [
             {
-                "matched_2000ms": 1,
+                "first_commit_outcome_2000ms": "premature",
+                "matched_2000ms": 0,
                 "false_positive_count_2000ms": 1,
-                "false_negative_count_2000ms": 0,
-                "endpoint_error_s_2000ms": 0.4,
+                "false_negative_count_2000ms": 1,
+                "endpoint_error_s_2000ms": "",
             },
             {
+                "first_commit_outcome_2000ms": "success",
                 "matched_2000ms": 1,
                 "false_positive_count_2000ms": 0,
                 "false_negative_count_2000ms": 0,
@@ -59,8 +61,21 @@ class EndpointBenchmarkTests(unittest.TestCase):
             },
         ]
         metrics = metric_bundle(rows, 2.0)
-        self.assertAlmostEqual(metrics["precision"], 2 / 3)
-        self.assertAlmostEqual(metrics["recall"], 1.0)
+        self.assertAlmostEqual(metrics["precision"], 0.5)
+        self.assertAlmostEqual(metrics["recall"], 0.5)
+        self.assertAlmostEqual(metrics["f1"], 0.5)
+        self.assertAlmostEqual(metrics["premature_sensitive_first_commit_f1"], 0.5)
+        self.assertEqual(metrics["success_count"], 1.0)
+        self.assertEqual(metrics["premature_count"], 1.0)
+        self.assertEqual(metrics["late_count"], 0.0)
+        self.assertEqual(metrics["missed_count"], 0.0)
+        self.assertEqual(metrics["signed_error_effective_n"], 1.0)
+
+    def test_density_boundary_uses_minimum_intensity(self) -> None:
+        detector = MidiEndpointVAD(min_intensity=0.25)
+        self.assertEqual(detector.mu_tempo(), 0.25)
+        detector.observe_note_on(60, timestamp=1.0)
+        self.assertEqual(detector.mu_tempo(), 0.25)
 
 
 if __name__ == "__main__":

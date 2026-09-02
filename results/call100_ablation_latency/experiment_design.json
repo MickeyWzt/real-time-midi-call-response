@@ -69,7 +69,11 @@
       "L1_preload_on"
     ],
     "preload_window_ms": 150.0,
-    "micro_buffer_ms": 80.0,
-    "underrun_deadline_ms": 80.0
+    "startup_target_ms": 80.0,
+    "startup_policy": "commit-anchored max(B, C1-H)",
+    "quantity": "commit-to-first-generated-event readiness lower bound",
+    "legacy_source_field": "first_token_latency_sec; recorded at first yielded GeneratedEvent",
+    "not_measured": "MIDI transmission, host receipt, audio onset, or full-stream underrun",
+    "inference": "deterministic scheduler replay; no hypothesis test"
   }
 }

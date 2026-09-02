@@ -1,6 +1,6 @@
 {
-  "title": "Real-Time MIDI Call-and-Response Generation Using Autoregressive Transformers",
-  "version": "1.1.0",
+  "title": "Adapting a Frozen Anticipatory Music Transformer for Turn-Based MIDI Call-and-Response",
+  "version": "1.2.0",
   "upload_type": "software",
   "access_right": "open",
   "license": "mit",
@@ -15,7 +15,7 @@
       "type": "Researcher"
     }
   ],
-  "description": "Code and reproducibility outputs for adapting an offline autoregressive Transformer to real-time MIDI call-and-response. Version 1.1.0 includes a harmonized 27,000-row structural evaluation, exact score specification, A0-A6 activation audit, direct Call100 endpoint benchmark, 150 ms scheduler replay, aggregate blind-listening evidence, and the revised manuscript.",
+  "description": "Code and audit outputs for adapting a frozen Anticipatory Music Transformer to turn-based MIDI call-and-response. Version 1.2.0 adds Call/source-cluster inference, matched-versus-mismatched symbolic feature association, corrected first-commit endpoint semantics, commit-anchored scheduler replay, an A4 fallback guard, path-redacted provenance, regression tests, and the revised manuscript. No human-participant evidence is included.",
   "keywords": [
     "symbolic music generation",
     "MIDI",
@@ -25,9 +25,10 @@
     "real-time interaction",
     "objective evaluation",
     "endpoint detection",
-    "blind listening",
-    "latency logging",
+    "cluster-aware inference",
+    "symbolic feature association",
+    "latency replay",
     "speculative preload"
   ],
-  "notes": "This archive excludes model weights, license-sensitive source datasets, generated MIDI response batches, participant-level response exports, exclusion identifiers, private blind-study answer keys, deployment credentials, piano sample libraries, VST plugins, and DAWs."
+  "notes": "This archive excludes model weights, license-sensitive source datasets, generated MIDI response batches, all human-participant response data and aggregate outcomes, private answer keys, deployment credentials, piano sample libraries, VST plugins, and DAWs. Published trial tables contain path-redacted filenames and SHA-256 values; recomputing the feature-association analysis from MIDI requires locally regenerated response files."
 }

@@ -1,4 +1,0 @@
-candidate,sample_count,mean_objective_score,sd_objective_score,ci95_low_objective_score,ci95_high_objective_score,mean_style_compliance_score,sd_style_compliance_score,ci95_low_style_compliance_score,ci95_high_style_compliance_score,mean_non_style_structural_score,sd_non_style_structural_score,ci95_low_non_style_structural_score,ci95_high_non_style_structural_score
-amt_small_controlled,9000,0.732610,0.087051,0.730811,0.734408,0.809814,0.091977,0.807913,0.811714,0.676704,0.139570,0.673820,0.679587
-amt_small_raw,9000,0.560968,0.115148,0.558589,0.563346,0.563724,0.151074,0.560603,0.566846,0.558971,0.154736,0.555774,0.562168
-motif_transform_baseline,9000,0.752682,0.080560,0.751017,0.754346,0.854195,0.086995,0.852397,0.855992,0.679172,0.128875,0.676510,0.681835

@@ -788,6 +788,24 @@ def ablation_modules(variant: str) -> Dict[str, bool]:
     raise ValueError(f"Unknown ablation variant: {variant}")
 
 
+def ablation_fallback_args(
+    args: argparse.Namespace,
+    modules: Dict[str, bool],
+) -> argparse.Namespace:
+    """Return fallback settings restricted to the enabled ablation modules."""
+
+    fallback_args = copy(args)
+    fallback_args.style = (
+        STYLE_PENTATONIC_TWO_BAR if modules["style_constraint"] else STYLE_FREE
+    )
+    fallback_args.theory_control = bool(modules["full_theory"])
+    if not modules["full_theory"]:
+        fallback_args.cadence_degree = "none"
+        fallback_args.strong_beat_stable = False
+        fallback_args.max_melodic_leap = 0
+    return fallback_args
+
+
 def generated_events_to_tokens(events: Iterable[GeneratedEvent]) -> List[int]:
     tokens: List[int] = []
     for event in events:
@@ -858,15 +876,15 @@ def generate_ablation_amt(
     target_seconds = plan.target_seconds if modules["duration_matching"] else response_seconds
     response_generated: List[GeneratedEvent] = []
     local_generation_start = time.perf_counter()
-    first_token_latency_sec: Optional[float] = None
+    first_generated_event_latency_sec: Optional[float] = None
     for event in generator.generate_events(
         call_events=generation_call_events,
         response_seconds=target_seconds,
         stop_event=threading.Event(),
         controller=controller,
     ):
-        if first_token_latency_sec is None:
-            first_token_latency_sec = time.perf_counter() - local_generation_start
+        if first_generated_event_latency_sec is None:
+            first_generated_event_latency_sec = time.perf_counter() - local_generation_start
         response_generated.append(event)
         if len(response_generated) >= (plan.target_notes if modules["duration_matching"] else args.max_events):
             break
@@ -880,7 +898,12 @@ def generate_ablation_amt(
     empty_before_fallback = 1 if not response_generated else 0
     used_motif_fallback = 0
     if not response_generated and modules["fallback"]:
-        combined, response, motif_stats = generate_motif_baseline(notes, response_seconds, args, rng)
+        # The fallback must inherit only modules enabled by the ablation row.
+        # In particular, A4 cannot silently apply the A5 style projection.
+        fallback_args = ablation_fallback_args(args, modules)
+        combined, response, motif_stats = generate_motif_baseline(
+            notes, response_seconds, fallback_args, rng
+        )
         stats.update(motif_stats)
         stats["fallback_count"] = int(stats.get("event_repair_count", 0)) + 1
         stats["event_repair_count"] = int(stats.get("event_repair_count", 0))
@@ -892,7 +915,8 @@ def generate_ablation_amt(
         stats["fallback_enabled"] = int(modules["fallback"])
         stats["style_constraint_applied"] = int(modules["style_constraint"])
         stats["full_theory_applied"] = int(modules["full_theory"])
-        stats["first_token_latency_sec"] = ""
+        stats["first_generated_event_latency_sec"] = ""
+        stats["first_token_latency_sec"] = ""  # Legacy alias.
         return combined, response, stats
 
     raw_duration_seconds = 0.0
@@ -941,7 +965,13 @@ def generate_ablation_amt(
     stats["raw_response_duration_seconds"] = raw_duration_seconds
     stats["shaped_response_duration_seconds"] = shaped_duration_seconds
     stats["duration_stretch_factor"] = duration_stretch_factor
-    stats["first_token_latency_sec"] = first_token_latency_sec if first_token_latency_sec is not None else ""
+    first_event_value: object = (
+        first_generated_event_latency_sec
+        if first_generated_event_latency_sec is not None
+        else ""
+    )
+    stats["first_generated_event_latency_sec"] = first_event_value
+    stats["first_token_latency_sec"] = first_event_value  # Legacy alias.
     return combined, response_events, stats
 
 

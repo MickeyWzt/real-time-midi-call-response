@@ -1,9 +1,13 @@
-"""Direct Call100 benchmark for the MIDI-VAD endpoint detector.
+"""First-commit Call100 benchmark for the MIDI-VAD endpoint detector.
 
 The final Note-Off in each isolated Call100 file is used as a reproducible
-proxy reference boundary.  A commit more than 100 ms before that boundary is
-premature.  Post-boundary deadlines of 0.5, 1.0, and 2.0 seconds are all
-reported so the result does not depend on one selectively chosen tolerance.
+proxy reference boundary. A first commit more than 100 ms before that boundary
+is a premature failure. Post-boundary deadlines of 0.5, 1.0, and 2.0 seconds
+are all reported so the result does not depend on one selectively chosen
+tolerance. Replay stops at the first commit, matching the deployed
+Listening -> Candidate -> Commit -> Inference state transition. The reported
+PS-F1 is a custom premature-sensitive first-commit score, not conventional
+event-detection F1.
 """
 
 from __future__ import annotations
@@ -43,6 +47,8 @@ DEADLINES_SECONDS = (0.5, 1.0, PRIMARY_DEADLINE_SECONDS)
 EARLY_TOLERANCE_SECONDS = 0.1
 TICK_SECONDS = 0.005
 TRAILING_SIMULATION_SECONDS = 15.0
+BOOTSTRAP_ITERATIONS = 2000
+BOOTSTRAP_BASE_SEED = 20260809
 
 
 @dataclass(frozen=True)
@@ -53,6 +59,11 @@ class Condition:
     confirmation_delay: float
     fixed_cutoff: Optional[float] = None
     family: str = "main"
+    theta: float = 0.05
+    window_size: int = 8
+    min_intensity: float = 0.25
+    min_cutoff: Optional[float] = None
+    max_cutoff: Optional[float] = None
 
 
 CONDITIONS = (
@@ -67,6 +78,15 @@ CONDITIONS = (
     Condition("cluster_120ms", "adaptive", 0.12, 0.15, family="sensitivity"),
     Condition("confirm_75ms", "adaptive", 0.08, 0.075, family="sensitivity"),
     Condition("confirm_250ms", "adaptive", 0.08, 0.25, family="sensitivity"),
+    Condition("theta_0p02", "adaptive", 0.08, 0.15, family="theta", theta=0.02),
+    Condition("theta_0p10", "adaptive", 0.08, 0.15, family="theta", theta=0.10),
+    Condition("theta_0p20", "adaptive", 0.08, 0.15, family="theta", theta=0.20),
+    Condition("window_4", "adaptive", 0.08, 0.15, family="window", window_size=4),
+    Condition("window_12", "adaptive", 0.08, 0.15, family="window", window_size=12),
+    Condition("floor_0p125", "adaptive", 0.08, 0.15, family="floor", min_intensity=0.125),
+    Condition("floor_0p50", "adaptive", 0.08, 0.15, family="floor", min_intensity=0.50),
+    Condition("max_cutoff_2s", "adaptive", 0.08, 0.15, family="clamp", max_cutoff=2.0),
+    Condition("max_cutoff_4s", "adaptive", 0.08, 0.15, family="clamp", max_cutoff=4.0),
 )
 
 
@@ -85,6 +105,16 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def provenance_path(path: Path) -> str:
+    """Return a repository-relative path, or a filename for external inputs."""
+
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(ROOT.resolve()).as_posix()
+    except ValueError:
+        return resolved.name
 
 
 def read_manifest(path: Path) -> List[Dict[str, str]]:
@@ -127,9 +157,11 @@ def make_detector(
     decisions: List[EndpointDecision],
 ) -> MidiEndpointVAD:
     kwargs = dict(
-        theta=0.05,
-        window_size=8,
-        min_intensity=0.25,
+        theta=condition.theta,
+        window_size=condition.window_size,
+        min_intensity=condition.min_intensity,
+        min_cutoff=condition.min_cutoff,
+        max_cutoff=condition.max_cutoff,
         chord_cluster_window=condition.chord_cluster_window,
         endpoint_confirm_delay=condition.confirmation_delay,
         on_candidate_endpoint=candidates.append,
@@ -153,19 +185,29 @@ def simulate_call(
     detector = make_detector(condition, candidates, cancels, decisions)
 
     clock = 0.0
+    committed = False
     for event_time, pitch, velocity in note_ons:
         while clock + TICK_SECONDS < event_time - 1e-12:
             clock += TICK_SECONDS
             detector.tick(clock)
+            if decisions:
+                committed = True
+                break
+        if committed:
+            break
         clock = event_time
         detector.observe_note_on(pitch, velocity, event_time)
 
-    stop_time = reference_time + TRAILING_SIMULATION_SECONDS
-    while clock < stop_time:
-        clock = min(clock + TICK_SECONDS, stop_time)
-        detector.tick(clock)
+    if not decisions:
+        stop_time = reference_time + TRAILING_SIMULATION_SECONDS
+        while clock < stop_time:
+            clock = min(clock + TICK_SECONDS, stop_time)
+            detector.tick(clock)
+            if decisions:
+                break
 
     cut_times = [decision.cut_time for decision in decisions]
+    first_cut = cut_times[0] if cut_times else None
     row: Dict[str, object] = {
         "condition": condition.name,
         "condition_family": condition.family,
@@ -173,50 +215,67 @@ def simulate_call(
         "chord_cluster_window_s": condition.chord_cluster_window,
         "confirmation_delay_s": condition.confirmation_delay,
         "fixed_cutoff_s": "" if condition.fixed_cutoff is None else condition.fixed_cutoff,
+        "theta": condition.theta,
+        "window_size": condition.window_size,
+        "min_intensity": condition.min_intensity,
+        "min_cutoff_s": "" if condition.min_cutoff is None else condition.min_cutoff,
+        "max_cutoff_s": "" if condition.max_cutoff is None else condition.max_cutoff,
         "call_id": call_id,
-        "midi_path": str(midi_path),
+        "midi_file": midi_path.name,
         "midi_sha256": sha256(midi_path),
         "note_on_count": len(note_ons),
         "reference_final_note_off_s": reference_time,
         "candidate_count": len(candidates),
         "cancel_count": len(cancels),
         "decision_count": len(decisions),
-        "premature_decision_count": sum(
-            cut < reference_time - EARLY_TOLERANCE_SECONDS for cut in cut_times
+        "premature_decision_count": int(
+            first_cut is not None
+            and first_cut < reference_time - EARLY_TOLERANCE_SECONDS
         ),
-        "late_decision_count_2s": sum(
-            cut > reference_time + PRIMARY_DEADLINE_SECONDS for cut in cut_times
+        "late_decision_count_2s": int(
+            first_cut is not None
+            and first_cut > reference_time + PRIMARY_DEADLINE_SECONDS
         ),
         "candidate_cancel_rate": len(cancels) / len(candidates) if candidates else 0.0,
-        "decision_times_s": ";".join(f"{value:.6f}" for value in cut_times),
+        "decision_times_s": "" if first_cut is None else f"{first_cut:.6f}",
     }
 
     for deadline in DEADLINES_SECONDS:
-        eligible = [
-            (index, cut)
-            for index, cut in enumerate(cut_times)
-            if reference_time - EARLY_TOLERANCE_SECONDS
-            <= cut
-            <= reference_time + deadline
-        ]
-        if eligible:
-            match_index, match_time = min(
-                eligible, key=lambda item: abs(item[1] - reference_time)
-            )
+        if first_cut is None:
+            outcome = "missed"
+            matched = 0
+            match_index = -1
+            error: object = ""
+            false_positive_count = 0
+            false_negative_count = 1
+        elif first_cut < reference_time - EARLY_TOLERANCE_SECONDS:
+            outcome = "premature"
+            matched = 0
+            match_index = -1
+            error = ""
+            false_positive_count = 1
+            false_negative_count = 1
+        elif first_cut <= reference_time + deadline:
+            outcome = "success"
             matched = 1
-            error: object = match_time - reference_time
-            false_positive_count = len(cut_times) - 1
+            match_index = 0
+            error = first_cut - reference_time
+            false_positive_count = 0
+            false_negative_count = 0
         else:
+            outcome = "late"
             match_index = -1
             matched = 0
             error = ""
-            false_positive_count = len(cut_times)
+            false_positive_count = 0
+            false_negative_count = 1
         suffix = str(int(deadline * 1000))
+        row[f"first_commit_outcome_{suffix}ms"] = outcome
         row[f"matched_{suffix}ms"] = matched
         row[f"matched_decision_index_{suffix}ms"] = match_index
         row[f"endpoint_error_s_{suffix}ms"] = error
         row[f"false_positive_count_{suffix}ms"] = false_positive_count
-        row[f"false_negative_count_{suffix}ms"] = 1 - matched
+        row[f"false_negative_count_{suffix}ms"] = false_negative_count
     return row
 
 
@@ -235,6 +294,12 @@ def percentile(values: Sequence[float], probability: float) -> float:
 
 def metric_bundle(rows: Sequence[Dict[str, object]], deadline: float) -> Dict[str, float]:
     suffix = str(int(deadline * 1000))
+    outcome_counts = {
+        outcome: sum(
+            str(row[f"first_commit_outcome_{suffix}ms"]) == outcome for row in rows
+        )
+        for outcome in ("success", "premature", "late", "missed")
+    }
     true_positives = sum(int(row[f"matched_{suffix}ms"]) for row in rows)
     false_positives = sum(int(row[f"false_positive_count_{suffix}ms"]) for row in rows)
     false_negatives = sum(int(row[f"false_negative_count_{suffix}ms"]) for row in rows)
@@ -252,7 +317,14 @@ def metric_bundle(rows: Sequence[Dict[str, object]], deadline: float) -> Dict[st
         "false_negative_count": float(false_negatives),
         "precision": precision,
         "recall": recall,
+        "premature_sensitive_first_commit_f1": f1,
+        # Legacy field retained for compatibility; see the score definition above.
         "f1": f1,
+        "success_count": float(outcome_counts["success"]),
+        "premature_count": float(outcome_counts["premature"]),
+        "late_count": float(outcome_counts["late"]),
+        "missed_count": float(outcome_counts["missed"]),
+        "signed_error_effective_n": float(len(errors)),
         "median_signed_error_s": median(errors) if errors else math.nan,
         "mean_absolute_error_s": mean(abs(value) for value in errors) if errors else math.nan,
         "p90_absolute_error_s": percentile([abs(value) for value in errors], 0.9),
@@ -264,7 +336,7 @@ def bootstrap_interval(
 ) -> Tuple[float, float]:
     rng = random.Random(seed)
     estimates: List[float] = []
-    for _ in range(2000):
+    for _ in range(BOOTSTRAP_ITERATIONS):
         sample = [rows[rng.randrange(len(rows))] for _ in rows]
         estimates.append(metric_bundle(sample, deadline)[metric])
     return percentile(estimates, 0.025), percentile(estimates, 0.975)
@@ -281,7 +353,7 @@ def summarize(rows: Sequence[Dict[str, object]]) -> List[Dict[str, object]]:
         for deadline in DEADLINES_SECONDS:
             bundle = metric_bundle(items, deadline)
             f1_low, f1_high = bootstrap_interval(
-                items, deadline, "f1", seed=20260809 + int(deadline * 1000)
+                items, deadline, "f1", seed=BOOTSTRAP_BASE_SEED + int(deadline * 1000)
             )
             summary: Dict[str, object] = {
                 "condition": condition.name,
@@ -290,6 +362,11 @@ def summarize(rows: Sequence[Dict[str, object]]) -> List[Dict[str, object]]:
                 "chord_cluster_window_s": condition.chord_cluster_window,
                 "confirmation_delay_s": condition.confirmation_delay,
                 "fixed_cutoff_s": "" if condition.fixed_cutoff is None else condition.fixed_cutoff,
+                "theta": condition.theta,
+                "window_size": condition.window_size,
+                "min_intensity": condition.min_intensity,
+                "min_cutoff_s": "" if condition.min_cutoff is None else condition.min_cutoff,
+                "max_cutoff_s": "" if condition.max_cutoff is None else condition.max_cutoff,
                 "deadline_s": deadline,
                 "call_count": len(items),
                 **bundle,
@@ -332,11 +409,16 @@ def write_report(path: Path, summaries: Sequence[Dict[str, object]]) -> None:
         "# Call100 MIDI-VAD Endpoint Benchmark",
         "",
         "Reference boundary: final Note-Off in each isolated Call100 MIDI file.",
-        "A commit earlier than 100 ms before the reference is premature. Results are",
+        "Replay stops at the first commit. A first commit earlier than 100 ms before",
+        "the reference is a premature failure; commits after the first are never counted. Results are",
         "reported at 0.5, 1.0, and 2.0 s post-boundary deadlines; the table below uses 2.0 s.",
         "This file-end proxy is reproducible but is not a substitute for human boundary annotation.",
         "",
-        "| condition | precision | recall | F1 [95% CI] | median error (s) | MAE (s) | cancel rate | premature commits |",
+        "PS-F1 is the custom premature-sensitive first-commit score: TP=S, FP=P,",
+        "and FN=P+L+M. Signed error is commit minus final Note-Off and is computed",
+        "only for successful commits. S/P/L/M are mutually exclusive and sum to 100.",
+        "",
+        "| condition | precision | recall | PS-F1 [95% CI] | S/P/L/M | median error (s; N) | MAE (s) | cancel rate |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in primary:
@@ -344,10 +426,11 @@ def write_report(path: Path, summaries: Sequence[Dict[str, object]]) -> None:
             f"| {row['condition']} | {float(row['precision']):.3f} | "
             f"{float(row['recall']):.3f} | {float(row['f1']):.3f} "
             f"[{float(row['f1_ci95_low']):.3f}, {float(row['f1_ci95_high']):.3f}] | "
-            f"{float(row['median_signed_error_s']):.3f} | "
+            f"{int(float(row['success_count']))}/{int(float(row['premature_count']))}/"
+            f"{int(float(row['late_count']))}/{int(float(row['missed_count']))} | "
+            f"{float(row['median_signed_error_s']):.3f} ({int(float(row['signed_error_effective_n']))}) | "
             f"{float(row['mean_absolute_error_s']):.3f} | "
-            f"{float(row['candidate_cancel_rate']):.3f} | "
-            f"{int(row['premature_decision_count'])} |"
+            f"{float(row['candidate_cancel_rate']):.3f} |"
         )
     with path.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write("\n".join(lines) + "\n")
@@ -392,6 +475,14 @@ def main() -> None:
             "tick_s": TICK_SECONDS,
             "trailing_simulation_s": TRAILING_SIMULATION_SECONDS,
             "ground_truth_limitation": "file-end proxy; no human boundary annotation",
+            "state_machine_semantics": "replay terminates after the first commit",
+            "replay_horizon_after_reference_s": TRAILING_SIMULATION_SECONDS,
+            "score_name": "premature-sensitive first-commit F1 (PS-F1)",
+            "score_counts": "TP=success; FP=premature; FN=premature+late+missed",
+            "signed_error_scope": "commit minus final Note-Off; successful first commits only",
+            "bootstrap_iterations": BOOTSTRAP_ITERATIONS,
+            "bootstrap_seed_by_deadline": "20260809 + int(deadline_seconds * 1000); shared across conditions at the same deadline",
+            "bootstrap_interval": "linearly interpolated 2.5th and 97.5th percentiles at ordered-sample position (B-1)*q",
         },
         "detector_defaults": {
             "theta": 0.05,
@@ -401,8 +492,11 @@ def main() -> None:
             "confirmation_delay_s": 0.15,
         },
         "conditions": [asdict(condition) for condition in CONDITIONS],
-        "manifest": str(args.manifest.resolve()),
-        "manifest_sha256": sha256(args.manifest),
+        "benchmark_input_manifest": {
+            "manifest_file": provenance_path(args.manifest),
+            "manifest_sha256": sha256(args.manifest),
+            "path_policy": "the published release records a path-redacted manifest separately when the benchmark was run from a private absolute-path manifest",
+        },
         "detector_sha256": sha256(ROOT / "code" / "midi_vad_endpoint.py"),
         "benchmark_sha256": sha256(Path(__file__)),
         "call_count": len(manifest_rows),

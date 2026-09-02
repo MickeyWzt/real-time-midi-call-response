@@ -1,4 +1,0 @@
-comparison,candidate_a,candidate_b,paired_sample_count,mean_difference,ci95_low_bootstrap,ci95_high_bootstrap,cohen_dz,positive_pairs,negative_pairs,tied_pairs,paired_t_statistic,p_two_sided_paired_t,p_report
-controlled_minus_raw,amt_small_controlled,amt_small_raw,9000,0.171642,0.168923,0.174287,1.295183,8109,891,0,122.871829,0.000000e+00,<1e-6
-controlled_minus_motif,amt_small_controlled,motif_transform_baseline,9000,-0.020072,-0.022331,-0.017814,-0.186802,3856,5143,1,-17.721615,2.855956e-70,<1e-6
-motif_minus_raw,motif_transform_baseline,amt_small_raw,9000,0.191714,0.188850,0.194556,1.390176,8201,799,0,131.883698,0.000000e+00,<1e-6

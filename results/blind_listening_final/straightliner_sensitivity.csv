@@ -1,3 +1,0 @@
-﻿family,question_id,n_participants,controlled_mean,comparator_mean,mean_difference,bootstrap_ci_low,bootstrap_ci_high,sign_flip_p,cohens_dz
-ablation_a0_vs_a4,aggregate,40,2.78125,2.94375,-0.1625,-0.334375,0.00625,0.07800960995195023,-0.2924943751622544
-baseline_motif_vs_a6,aggregate,40,1.88125,2.2375,-0.35625,-0.54375,-0.165625,0.001034994825025875,-0.5789462989400624

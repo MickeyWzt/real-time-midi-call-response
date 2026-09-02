@@ -1,3 +1,3 @@
-buffer_underrun_count,condition,max_latency_ms,mean_first_token_latency_ms,mean_latency_ms,mean_total_generation_ms,p50_latency_ms,p95_latency_ms,p99_latency_ms,sample_count,underrun_rate
-1867,L0_preload_off,815.510000,81.302711,161.302711,1655.312037,136.455450,323.520665,479.574320,9000,0.207444
-472,L1_preload_on,665.510000,81.302711,91.720642,1655.312037,80.000000,173.520665,329.574320,9000,0.052444
+condition,max_first_event_readiness_lower_bound_ms,max_latency_ms,mean_first_event_readiness_lower_bound_ms,mean_first_generated_event_latency_ms,mean_first_token_latency_ms,mean_latency_ms,mean_total_generation_ms,p50_first_event_readiness_lower_bound_ms,p50_latency_ms,p95_first_event_readiness_lower_bound_ms,p95_latency_ms,p99_first_event_readiness_lower_bound_ms,p99_latency_ms,sample_count,startup_deadline_miss_count,startup_deadline_miss_rate
+L0_preload_off,735.510000,735.510000,101.543478,81.302711,81.302711,101.543478,1655.312037,80.000000,80.000000,243.520665,243.520665,399.574320,399.574320,9000,1867,0.207444
+L1_preload_on,585.510000,585.510000,86.544816,81.302711,81.302711,86.544816,1655.312037,80.000000,80.000000,93.520665,93.520665,249.574320,249.574320,9000,472,0.052444

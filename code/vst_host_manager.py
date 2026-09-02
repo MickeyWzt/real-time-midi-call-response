@@ -30,7 +30,7 @@ class PianoHostManager:
                 available=False,
                 running=False,
                 exe_path=str(PIANO_HOST_EXE),
-                message="4Front Piano host not found. Check D:\\Mickey\\MFP\\4fpiano-win.",
+                message="4Front Piano host not found. Check the project's 4fpiano-win directory.",
             )
 
         running = self._process is not None and self._process.poll() is None

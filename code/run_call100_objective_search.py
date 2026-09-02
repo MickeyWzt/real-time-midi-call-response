@@ -145,6 +145,13 @@ def read_csv(path: Path) -> List[Dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+def portable_filename(value: object) -> str:
+    """Keep published failure-case paths independent of the local workspace."""
+
+    raw = str(value or "")
+    return Path(raw).name if raw else ""
+
+
 def write_csv(path: Path, rows: Sequence[Dict[str, object]], fields: Sequence[str] | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if fields is None:
@@ -155,7 +162,12 @@ def write_csv(path: Path, rows: Sequence[Dict[str, object]], fields: Sequence[st
                     ordered.append(key)
         fields = ordered
     with path.open("w", newline="", encoding="utf-8-sig") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(fields), extrasaction="ignore")
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=list(fields),
+            extrasaction="ignore",
+            lineterminator="\n",
+        )
         writer.writeheader()
         for row in rows:
             writer.writerow({field: format_value(row.get(field, "")) for field in fields})
@@ -593,7 +605,7 @@ def write_failure_cases(rows: Sequence[Dict[str, object]], output_dir: Path) -> 
                     "objective_score": row.get("objective_score"),
                     "duration_match_ratio": row.get("duration_match_ratio"),
                     "note_count": row.get("note_count"),
-                    "response_midi_path": row.get("response_midi_path"),
+                    "response_midi_path": portable_filename(row.get("response_midi_path")),
                 }
             )
     failures.sort(key=lambda item: fnum(item.get("objective_score")))

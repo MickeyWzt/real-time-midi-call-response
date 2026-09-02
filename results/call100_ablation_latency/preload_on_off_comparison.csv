@@ -1,2 +1,2 @@
-ci95_high,ci95_low,comparison,mean_latency_reduction_ms,negative_pairs,p_two_sided_sign_test,paired_sample_count,positive_pairs,tied_pairs
-70.263268,68.864876,L1_preload_on_vs_L0_preload_off,69.582069,0,<0.000001,9000,9000,0
+comparison,inference,mean_latency_reduction_ms,mean_readiness_lower_bound_reduction_ms,negative_pairs,paired_sample_count,positive_pairs,tied_pairs
+L1_preload_on_vs_L0_preload_off,deterministic replay; no hypothesis test,14.998662,14.998662,0,9000,1867,7133

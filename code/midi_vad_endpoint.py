@@ -97,7 +97,9 @@ class MidiEndpointVAD:
     In implementation, the local intensity lambda(t) is approximated by
     recent onset density:
 
-        mu_tempo = (K - 1) / (t_K - t_1)
+        mu_tempo = max(min_intensity, (K - 1) / (t_K - t_1))
+
+    When K < 2 or t_K <= t_1, the implementation returns min_intensity.
 
     over the current sliding window. The phrase endpoint is detected when:
 
@@ -201,7 +203,7 @@ class MidiEndpointVAD:
             )
 
     def mu_tempo(self) -> float:
-        """Estimate local Poisson intensity from recent onset density."""
+        """Estimate density, using min_intensity for fewer than two or tied onsets."""
 
         if len(self._onsets) < 2:
             return self.min_intensity
@@ -450,7 +452,12 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--live", action="store_true", help="listen to a real MIDI input port")
 
     parser.add_argument("--port", help="MIDI input port name for --live")
-    parser.add_argument("--theta", type=float, default=0.05, help="survival confidence boundary")
+    parser.add_argument(
+        "--theta",
+        type=float,
+        default=0.05,
+        help="heuristic survival-timer threshold (not calibrated confidence)",
+    )
     parser.add_argument("--window-size", type=int, default=8, help="recent onsets used for mu_tempo")
     parser.add_argument(
         "--min-intensity",

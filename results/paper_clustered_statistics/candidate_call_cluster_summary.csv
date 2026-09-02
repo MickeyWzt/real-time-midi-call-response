@@ -1,0 +1,4 @@
+candidate,descriptive_rows,independent_calls,mean_objective_score,call_cluster_ci95_low,call_cluster_ci95_high
+amt_small_controlled,9000,100,0.732610,0.722531,0.742323
+amt_small_raw,9000,100,0.560968,0.547154,0.575198
+motif_transform_baseline,9000,100,0.752682,0.741863,0.763309

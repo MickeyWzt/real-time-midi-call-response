@@ -224,6 +224,8 @@ def evaluate_notes(notes: List[Note], ticks_per_beat: int, args: argparse.Namesp
     if not notes:
         return {
             "note_count": 0,
+            "constraint_target_score": 0.0,
+            "remaining_components_score": 0.0,
             "style_compliance_score": 0.0,
             "non_style_structural_score": 0.0,
             "objective_score": 0.0,
@@ -313,6 +315,8 @@ def evaluate_notes(notes: List[Note], ticks_per_beat: int, args: argparse.Namesp
         "rhythm_score": rhythm_score,
         "tonality_score": tonality_score,
         "compression_score": compression_score,
+        "constraint_target_score": style_compliance_score,
+        "remaining_components_score": non_style_structural_score,
         "style_compliance_score": style_compliance_score,
         "non_style_structural_score": non_style_structural_score,
         "objective_score": objective_score,
@@ -326,6 +330,14 @@ def score_spec(args: argparse.Namespace) -> Dict[str, object]:
         "legacy_field_name": "objective_score",
         "weights": OBJECTIVE_WEIGHTS,
         "decomposition": {
+            "preferred_names": {
+                "constraint_target_score": "style_compliance_score",
+                "remaining_components_score": "non_style_structural_score",
+            },
+            "legacy_field_names": [
+                "style_compliance_score",
+                "non_style_structural_score",
+            ],
             "style_compliance_weight": STYLE_COMPLIANCE_WEIGHT,
             "non_style_structural_weight": NON_STYLE_STRUCTURAL_WEIGHT,
             "style_compliance_components": ["tonality_score", "rhythm_score"],
@@ -417,6 +429,8 @@ def summarize(rows: List[Dict[str, object]]) -> List[Dict[str, object]]:
 
     metric_names = [
         "objective_score",
+        "constraint_target_score",
+        "remaining_components_score",
         "style_compliance_score",
         "non_style_structural_score",
         "tonality_score",

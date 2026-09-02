@@ -1,3 +1,3 @@
-title: Real-Time MIDI Call-and-Response
+title: Adapting a Frozen Anticipatory Music Transformer for Turn-Based MIDI Call-and-Response
 description: Code and results for real-time MIDI call-and-response generation using autoregressive Transformers.
 theme: jekyll-theme-cayman

@@ -1,6 +1,13 @@
 {
   "created_at": "2026-08-09T17:28:47+08:00",
   "score_version": "structural_compliance_v1.1",
+  "archived_runtime": {
+    "python_version": null,
+    "zlib_compile_version": null,
+    "zlib_runtime_version": null,
+    "note": "The original 2026-08-09 run did not record runtime versions; do not infer them from a later environment."
+  },
+  "current_runtime_revalidation": "results/evaluation_integrity_audit/runtime_revalidation_20260816.json",
   "source_hashes": {
     "ablation_all_results.csv": "a41047ca74013f54a4ae6999a402bf7e2d83cabdbb1664bebf55827317e48150",
     "legacy_all_objective_results.csv": "1f679cf26044e8679d262fe76bff24a9b6335e7c0155876f51389aa25712b6fc",

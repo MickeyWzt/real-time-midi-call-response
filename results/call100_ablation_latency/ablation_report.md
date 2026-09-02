@@ -32,16 +32,18 @@
 | A5 | A5_style_constraint | 9000 | 0.708929 | 0.128617 | 0.844393 | 1.000000 | 0.731233 |
 | A6 | A6_full_controlled | 9000 | 0.732610 | 0.135255 | 0.936885 | 1.000000 | 0.995389 |
 
-## Module Contributions
+## Call-clustered module contributions
 
-| module_step | module_added | paired_sample_count | mean_delta | ci95_low | ci95_high | p_two_sided |
-| --- | --- | --- | --- | --- | --- | --- |
-| A1 minus A0 | prompt cleaning | 9000 | 0.013297 | 0.010832 | 0.015736 | 0.000000 |
-| A2 minus A1 | repetition suppression | 9000 | 0.036439 | 0.034068 | 0.038919 | 0.000000 |
-| A3 minus A2 | duration matching | 9000 | 0.029822 | 0.028143 | 0.031398 | 0.000000 |
-| A4 minus A3 | motif fallback | 9000 | 0.000000 | 0.000000 | 0.000000 | 1.000000 |
-| A5 minus A4 | style constraint | 9000 | 0.068403 | 0.066357 | 0.070537 | 0.000000 |
-| A6 minus A5 | full controlled | 9000 | 0.023681 | 0.022480 | 0.024868 | 0.000000 |
+The 9,000 repeated rows per variant are descriptive, not independent musical inputs. Primary uncertainty first averages within each of 100 Calls; the authoritative generated table and 87-source sensitivity are in `results/paper_clustered_statistics/ablation_clustered_stepwise.csv`.
+
+| module_step | module_added | mean_delta | Call 95% CI | positive Calls |
+| --- | --- | ---: | ---: | ---: |
+| A1 minus A0 | prompt cleaning | 0.013297 | [0.007294, 0.019632] | 54/100 |
+| A2 minus A1 | repetition suppression | 0.036439 | [0.028276, 0.045060] | 85/100 |
+| A3 minus A2 | duration matching | 0.029822 | [0.022882, 0.036700] | 92/100 |
+| A4 minus A3 | motif fallback | 0.000000 | [0.000000, 0.000000] | 0/100 |
+| A5 minus A4 | style constraint | 0.068403 | [0.056710, 0.080175] | 91/100 |
+| A6 minus A5 | full controlled | 0.023681 | [0.018953, 0.028472] | 91/100 |
 
 ## Validation
 

@@ -31,8 +31,12 @@ jobs:
           python code/run_call100_ablation_latency.py --help
           python code/build_harmonized_call100_evaluation.py --help
           python code/run_endpoint_benchmark.py --help
+          python code/analyze_call_response_association.py --help
+          python code/analyze_paper_clustered_statistics.py --help
+          python code/recompute_scheduler_replay.py --help
 
       - name: Run integrity regression tests
         run: |
           python code/test_evaluation_integrity.py
           python code/test_endpoint_benchmark.py
+          python code/test_call_response_association.py

@@ -1,0 +1,21 @@
+{
+  "created_at": "2026-08-16T21:28:53+08:00",
+  "scope": "Full 27000-row score/runtime revalidation only; temporary bootstrap output is not used for paper inference.",
+  "original_archived_runtime_known": false,
+  "runtime": {
+    "python_version": "3.12.10",
+    "zlib_compile_version": "1.3.1",
+    "zlib_runtime_version": "1.3.1"
+  },
+  "source_hashes": {
+    "ablation_all_results.csv": "a41047ca74013f54a4ae6999a402bf7e2d83cabdbb1664bebf55827317e48150",
+    "legacy_all_objective_results.csv": "1f679cf26044e8679d262fe76bff24a9b6335e7c0155876f51389aa25712b6fc",
+    "evaluate_melody_metrics.py": "970d33357280b598fea3bc43cb8563dc6305656f32c3821d2c409e3a93bbeba8",
+    "temporary_all_harmonized_results.csv": "aadd5d3b902dbc8a21cc8e84ab93090132c8c6b9acef45187966fbb4362334c9"
+  },
+  "audit": {
+    "row_count": 27000,
+    "max_abs_objective_score_drift": 4.999999999588667e-7,
+    "rows_with_drift_gt_5e-7": 0
+  }
+}

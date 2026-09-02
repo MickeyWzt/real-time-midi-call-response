@@ -30,6 +30,16 @@ AB_DIR = ROOT / "ab_tests"
 DEFAULT_MANIFEST = AB_DIR / "calls_100_public_final" / "call100_manifest.csv"
 DEFAULT_OUTPUT_DIR = AB_DIR / "objective_ablation_call100_trials15_latency"
 
+
+def provenance_label(path: Path) -> str:
+    """Return a stable path label without exposing the local checkout path."""
+
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(ROOT.resolve()).as_posix()
+    except ValueError:
+        return resolved.name
+
 VARIANTS: List[Dict[str, object]] = [
     {
         "variant": "A0_raw_amt",
@@ -135,6 +145,7 @@ ABLATION_FIELDS = [
     "duration_matching_applied",
     "style_constraint_applied",
     "full_theory_applied",
+    "first_generated_event_latency_sec",
     "first_token_latency_sec",
     "response_midi_path",
 ]
@@ -169,6 +180,11 @@ LATENCY_FIELDS = [
     "response_duration_sec",
     "t_endpoint_commit_ms",
     "t_infer_start_ms",
+    "t_first_generated_event_ready_ms",
+    "commit_to_first_event_readiness_lower_bound_ms",
+    "first_generated_event_latency_ms",
+    "modeled_response_end_lower_bound_ms",
+    # Legacy aliases retained so earlier consumers can read the revised files.
     "t_first_token_ready_ms",
     "t_first_midi_queued_ms",
     "t_first_midi_out_ms",
@@ -177,6 +193,9 @@ LATENCY_FIELDS = [
     "first_token_latency_ms",
     "queue_delay_ms",
     "total_generation_ms",
+    "startup_deadline_miss",
+    "startup_deadline_miss_rate",
+    "startup_target_ms",
     "buffer_underrun_count",
     "buffer_underrun_rate",
     "preload_window_ms",
@@ -430,6 +449,12 @@ def aggregate_results(
                         "duration_matching_applied": int(fnum(answer.get("duration_matching_applied"), 0)),
                         "style_constraint_applied": int(fnum(answer.get("style_constraint_applied"), 0)),
                         "full_theory_applied": int(fnum(answer.get("full_theory_applied"), 0)),
+                        "first_generated_event_latency_sec": fnum(
+                            answer.get(
+                                "first_generated_event_latency_sec",
+                                answer.get("first_token_latency_sec"),
+                            )
+                        ),
                         "first_token_latency_sec": fnum(answer.get("first_token_latency_sec")),
                         "response_midi_path": answer.get("response_only_midi") or metric.get("midi_path", ""),
                     }
@@ -462,6 +487,7 @@ def variant_order(variant: str) -> int:
 
 
 def module_contributions(rows: Sequence[Dict[str, object]], presets: Sequence[str], variants: Sequence[str], iterations: int) -> List[Dict[str, object]]:
+    """Return descriptive repeated-row deltas; paper inference is Call-clustered."""
     result: List[Dict[str, object]] = []
     metrics = [
         "objective_score",
@@ -496,11 +522,8 @@ def module_contributions(rows: Sequence[Dict[str, object]], presets: Sequence[st
                     if prev is None:
                         continue
                     diffs.append(fnum(row.get(metric)) - fnum(prev.get(metric)))
-                observed, low, high, p_value = base.bootstrap_ci(
-                    diffs,
-                    iterations,
-                    seed=20260622 + len(result) * 13,
-                )
+                observed = sum(diffs) / len(diffs) if diffs else 0.0
+                sd = math.sqrt(sum((value - observed) ** 2 for value in diffs) / (len(diffs) - 1)) if len(diffs) > 1 else 0.0
                 result.append(
                     {
                         "group": group_name,
@@ -509,9 +532,8 @@ def module_contributions(rows: Sequence[Dict[str, object]], presets: Sequence[st
                         "metric": metric,
                         "paired_sample_count": len(diffs),
                         "mean_delta": f"{observed:.6f}",
-                        "ci95_low": f"{low:.6f}",
-                        "ci95_high": f"{high:.6f}",
-                        "p_two_sided": f"{p_value:.6f}",
+                        "sd_delta": f"{sd:.6f}",
+                        "inference_scope": "descriptive repeated rows; use results/paper_clustered_statistics/ablation_clustered_stepwise.csv",
                     }
                 )
     return result
@@ -645,7 +667,11 @@ def read_latency_jsonl(path: Path) -> List[Dict[str, object]]:
     return rows
 
 
-def build_latency_trials(output_dir: Path, preload_window_ms: float, micro_buffer_ms: float, underrun_deadline_ms: float) -> List[Dict[str, object]]:
+def build_latency_trials(
+    output_dir: Path,
+    preload_window_ms: float,
+    startup_target_ms: float,
+) -> List[Dict[str, object]]:
     events = [
         row for row in read_latency_jsonl(output_dir / "latency_events.jsonl")
         if row.get("event_type") == "generation" and row.get("status") == "ok" and str(row.get("run_name", "")).endswith("__A6_full_controlled")
@@ -653,17 +679,24 @@ def build_latency_trials(output_dir: Path, preload_window_ms: float, micro_buffe
     trials: List[Dict[str, object]] = []
     for idx, row in enumerate(events, start=1):
         preset, _variant = split_run_name(str(row["run_name"]))
-        first_token_ms = fnum(row.get("first_token_latency_sec"), fnum(row.get("generation_latency_sec"))) * 1000.0
+        # The source field has a legacy name. offline_ab_test records it when the
+        # generator first yields a complete GeneratedEvent, not a raw token.
+        first_generated_event_ms = fnum(
+            row.get("first_generated_event_latency_sec", row.get("first_token_latency_sec")),
+            fnum(row.get("generation_latency_sec")),
+        ) * 1000.0
         total_generation_ms = fnum(row.get("generation_latency_sec")) * 1000.0
         note_count = int(fnum(row.get("response_note_count"), 0))
         response_duration_sec = fnum(row.get("target_response_seconds"), 0.0)
         for condition in ("L0_preload_off", "L1_preload_on"):
             infer_start = 0.0 if condition == "L0_preload_off" else -preload_window_ms
-            first_ready = infer_start + first_token_ms
+            first_ready = infer_start + first_generated_event_ms
             first_queued = max(0.0, first_ready)
-            first_out = first_queued + micro_buffer_ms
+            # B is anchored to endpoint commit. If the first event is ready before
+            # B, playback waits until B; otherwise playback starts when it is ready.
+            first_out = max(startup_target_ms, first_ready)
             response_end = first_out + response_duration_sec * 1000.0
-            underrun = int(first_queued > underrun_deadline_ms)
+            startup_miss = int(first_ready > startup_target_ms)
             trials.append(
                 {
                     "condition": condition,
@@ -676,18 +709,27 @@ def build_latency_trials(output_dir: Path, preload_window_ms: float, micro_buffe
                     "response_duration_sec": f"{response_duration_sec:.6f}",
                     "t_endpoint_commit_ms": "0.000000",
                     "t_infer_start_ms": f"{infer_start:.6f}",
+                    "t_first_generated_event_ready_ms": f"{first_ready:.6f}",
+                    "commit_to_first_event_readiness_lower_bound_ms": f"{first_out:.6f}",
+                    "first_generated_event_latency_ms": f"{first_generated_event_ms:.6f}",
+                    "modeled_response_end_lower_bound_ms": f"{response_end:.6f}",
+                    # Legacy aliases: these are modeled readiness values, not
+                    # measured MIDI transmission or audio-onset timestamps.
                     "t_first_token_ready_ms": f"{first_ready:.6f}",
                     "t_first_midi_queued_ms": f"{first_queued:.6f}",
                     "t_first_midi_out_ms": f"{first_out:.6f}",
                     "t_response_end_ms": f"{response_end:.6f}",
                     "endpoint_to_first_midi_ms": f"{first_out:.6f}",
-                    "first_token_latency_ms": f"{first_token_ms:.6f}",
+                    "first_token_latency_ms": f"{first_generated_event_ms:.6f}",
                     "queue_delay_ms": f"{first_out - first_queued:.6f}",
                     "total_generation_ms": f"{total_generation_ms:.6f}",
-                    "buffer_underrun_count": underrun,
-                    "buffer_underrun_rate": f"{float(underrun):.6f}",
+                    "startup_deadline_miss": startup_miss,
+                    "startup_deadline_miss_rate": f"{float(startup_miss):.6f}",
+                    "startup_target_ms": f"{startup_target_ms:.6f}",
+                    "buffer_underrun_count": startup_miss,
+                    "buffer_underrun_rate": f"{float(startup_miss):.6f}",
                     "preload_window_ms": f"{(0.0 if condition == 'L0_preload_off' else preload_window_ms):.6f}",
-                    "micro_buffer_ms": f"{micro_buffer_ms:.6f}",
+                    "micro_buffer_ms": f"{startup_target_ms:.6f}",
                     "source_latency_event": idx,
                 }
             )
@@ -701,20 +743,46 @@ def latency_summary(rows: Sequence[Dict[str, object]], keys: Sequence[str]) -> L
     out_rows: List[Dict[str, object]] = []
     for group_key, items in sorted(grouped.items()):
         out = {key: value for key, value in zip(keys, group_key)}
-        lat = [fnum(row.get("endpoint_to_first_midi_ms")) for row in items]
-        first = [fnum(row.get("first_token_latency_ms")) for row in items]
+        lat = [
+            fnum(
+                row.get(
+                    "commit_to_first_event_readiness_lower_bound_ms",
+                    row.get("endpoint_to_first_midi_ms"),
+                )
+            )
+            for row in items
+        ]
+        first = [
+            fnum(
+                row.get(
+                    "first_generated_event_latency_ms",
+                    row.get("first_token_latency_ms"),
+                )
+            )
+            for row in items
+        ]
         total = [fnum(row.get("total_generation_ms")) for row in items]
-        underruns = [fnum(row.get("buffer_underrun_count")) for row in items]
+        misses = [
+            fnum(row.get("startup_deadline_miss", row.get("buffer_underrun_count")))
+            for row in items
+        ]
         out.update(
             {
                 "sample_count": len(items),
+                "mean_first_event_readiness_lower_bound_ms": f"{mean(lat):.6f}",
+                "p50_first_event_readiness_lower_bound_ms": f"{percentile(lat, 0.50):.6f}",
+                "p95_first_event_readiness_lower_bound_ms": f"{percentile(lat, 0.95):.6f}",
+                "p99_first_event_readiness_lower_bound_ms": f"{percentile(lat, 0.99):.6f}",
+                "max_first_event_readiness_lower_bound_ms": f"{max(lat) if lat else 0.0:.6f}",
+                "mean_first_generated_event_latency_ms": f"{mean(first):.6f}",
+                # Legacy aliases retained for older plotting/analysis scripts.
                 "mean_latency_ms": f"{mean(lat):.6f}",
                 "p50_latency_ms": f"{percentile(lat, 0.50):.6f}",
                 "p95_latency_ms": f"{percentile(lat, 0.95):.6f}",
                 "p99_latency_ms": f"{percentile(lat, 0.99):.6f}",
                 "max_latency_ms": f"{max(lat) if lat else 0.0:.6f}",
-                "buffer_underrun_count": int(sum(underruns)),
-                "underrun_rate": f"{mean(underruns):.6f}",
+                "startup_deadline_miss_count": int(sum(misses)),
+                "startup_deadline_miss_rate": f"{mean(misses):.6f}",
                 "mean_first_token_latency_ms": f"{mean(first):.6f}",
                 "mean_total_generation_ms": f"{mean(total):.6f}",
             }
@@ -731,48 +799,59 @@ def preload_comparison(latency_rows: Sequence[Dict[str, object]]) -> List[Dict[s
     diffs = []
     for key, vals in by_key.items():
         if "L0_preload_off" in vals and "L1_preload_on" in vals:
-            off = fnum(vals["L0_preload_off"].get("endpoint_to_first_midi_ms"))
-            on = fnum(vals["L1_preload_on"].get("endpoint_to_first_midi_ms"))
+            off = fnum(
+                vals["L0_preload_off"].get(
+                    "commit_to_first_event_readiness_lower_bound_ms",
+                    vals["L0_preload_off"].get("endpoint_to_first_midi_ms"),
+                )
+            )
+            on = fnum(
+                vals["L1_preload_on"].get(
+                    "commit_to_first_event_readiness_lower_bound_ms",
+                    vals["L1_preload_on"].get("endpoint_to_first_midi_ms"),
+                )
+            )
             diffs.append(off - on)
-    observed, low, high, _ = base.bootstrap_ci(diffs, 1000, 20260622)
+    observed = mean(diffs) if diffs else 0.0
     positive_pairs = sum(diff > 0 for diff in diffs)
     negative_pairs = sum(diff < 0 for diff in diffs)
     tied_pairs = len(diffs) - positive_pairs - negative_pairs
-    non_tied_pairs = positive_pairs + negative_pairs
-    tail_count = min(positive_pairs, negative_pairs)
-    sign_test_numerator = 2 * sum(math.comb(non_tied_pairs, i) for i in range(tail_count + 1))
-    sign_test_denominator = 2**non_tied_pairs
-    if non_tied_pairs == 0:
-        p_value = "1.000000"
-    elif sign_test_numerator * 1_000_000 < sign_test_denominator:
-        p_value = "<0.000001"
-    else:
-        p_value = f"{min(1.0, sign_test_numerator / sign_test_denominator):.6f}"
     return [
         {
             "comparison": "L1_preload_on_vs_L0_preload_off",
             "paired_sample_count": len(diffs),
+            "mean_readiness_lower_bound_reduction_ms": f"{observed:.6f}",
             "mean_latency_reduction_ms": f"{observed:.6f}",
-            "ci95_low": f"{low:.6f}",
-            "ci95_high": f"{high:.6f}",
             "positive_pairs": positive_pairs,
             "negative_pairs": negative_pairs,
             "tied_pairs": tied_pairs,
-            "p_two_sided_sign_test": p_value,
+            "inference": "deterministic replay; no hypothesis test",
         }
     ]
 
 
 def chart_latency_box(latency_rows: Sequence[Dict[str, object]], chart_dir: Path) -> None:
     groups = ["L0_preload_off", "L1_preload_on"]
-    vals = {group: sorted(fnum(row.get("endpoint_to_first_midi_ms")) for row in latency_rows if row.get("condition") == group) for group in groups}
+    vals = {
+        group: sorted(
+            fnum(
+                row.get(
+                    "commit_to_first_event_readiness_lower_bound_ms",
+                    row.get("endpoint_to_first_midi_ms"),
+                )
+            )
+            for row in latency_rows
+            if row.get("condition") == group
+        )
+        for group in groups
+    }
     width, height = 650, 390
     left, top, chart_w, chart_h = 80, 60, 500, 240
     max_v = max([max(v) for v in vals.values() if v] + [1])
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         '<rect width="100%" height="100%" fill="white"/>',
-        '<text x="30" y="36" font-family="Arial" font-size="22" font-weight="700">Preload On/Off First-Note Latency</text>',
+        '<text x="30" y="36" font-family="Arial" font-size="22" font-weight="700">Preload On/Off First-Event Readiness Bound</text>',
         f'<line x1="{left}" y1="{top + chart_h}" x2="{left + chart_w}" y2="{top + chart_h}" stroke="#111827"/>',
     ]
     for idx, group in enumerate(groups):
@@ -797,9 +876,9 @@ def chart_latency_table(summary: Sequence[Dict[str, object]], chart_dir: Path) -
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         '<rect width="100%" height="100%" fill="white"/>',
-        '<text x="30" y="36" font-family="Arial" font-size="22" font-weight="700">Latency Percentiles</text>',
+        '<text x="30" y="36" font-family="Arial" font-size="22" font-weight="700">First-Event Readiness-Bound Percentiles</text>',
     ]
-    cols = ["condition", "p50_latency_ms", "p95_latency_ms", "p99_latency_ms", "max_latency_ms", "underrun_rate"]
+    cols = ["condition", "p50_latency_ms", "p95_latency_ms", "p99_latency_ms", "max_latency_ms", "startup_deadline_miss_rate"]
     x0, y0, row_h, col_w = 30, 65, 34, 125
     for j, col in enumerate(cols):
         parts.append(f'<text x="{x0 + j * col_w}" y="{y0}" font-family="Arial" font-size="12" font-weight="700">{svg_escape(col)}</text>')
@@ -844,6 +923,7 @@ def write_reports(
     latency_summary_condition: Sequence[Dict[str, object]],
     preload_rows: Sequence[Dict[str, object]],
     preload_window_ms: float,
+    startup_target_ms: float,
 ) -> None:
     lines = [
         "# Call100 Ablation Study",
@@ -866,8 +946,14 @@ def write_reports(
         lines.append(f"- `{meta['short']} {variant}`: {meta['description']}")
     lines.extend(["", "## Summary By Variant", ""])
     lines.extend(base.report_table(variant_summary, ["variant_short", "ablation_variant", "sample_count", "mean_objective_score", "mean_cpr", "mean_duration_match_ratio", "mean_psr", "mean_cadence_score"], 20))
-    lines.extend(["", "## Module Contributions", ""])
-    lines.extend(base.report_table([row for row in module_rows if row["group"] == "overall" and row["metric"] == "objective_score"], ["module_step", "module_added", "paired_sample_count", "mean_delta", "ci95_low", "ci95_high", "p_two_sided"], 20))
+    lines.extend([
+        "",
+        "## Descriptive Module Contributions",
+        "",
+        "The 9,000 repeated rows per variant are not independent musical inputs. Values below are descriptive only; canonical uncertainty is computed after within-Call averaging in `results/paper_clustered_statistics/ablation_clustered_stepwise.csv`.",
+        "",
+    ])
+    lines.extend(base.report_table([row for row in module_rows if row["group"] == "overall" and row["metric"] == "objective_score"], ["module_step", "module_added", "paired_sample_count", "mean_delta", "sd_delta"], 20))
     lines.extend(["", "## Validation", ""])
     if validation.get("errors"):
         lines.extend([f"- ERROR: {error}" for error in validation["errors"]])
@@ -876,21 +962,22 @@ def write_reports(
     (output_dir / "ablation_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     latency_lines = [
-        "# Call100 Runtime Latency Logging and Scheduler Replay",
+        "# Call100 First-Event Readiness Logging and Scheduler Replay",
         "",
         "## Design",
         "",
         "- L0 preload off: inference starts at endpoint commit.",
         f"- L1 preload on: decoding may overlap the candidate-confirmation interval by up to `{preload_window_ms:.0f} ms`.",
-        "- The logged inference timings come from actual local AMT decoding during the A6 full-controlled ablation runs.",
-        "- Endpoint-to-first-MIDI timing is a deterministic scheduler replay with the configured micro-buffer.",
+        "- The logged inference timings come from actual local AMT decoding during the A6 full-controlled ablation runs; the legacy `first_token_latency_sec` field is recorded at the first yielded `GeneratedEvent`.",
+        f"- The first-event readiness target is commit-anchored at `{startup_target_ms:.0f} ms`; readiness after that target counts as a target miss.",
+        "- The reported quantity is a deterministic first-generated-event readiness lower bound, not measured MIDI-send or audio-onset latency; no preload hypothesis test is reported.",
         "",
         "## Summary By Condition",
         "",
     ]
-    latency_lines.extend(base.report_table(latency_summary_condition, ["condition", "sample_count", "mean_latency_ms", "p50_latency_ms", "p95_latency_ms", "p99_latency_ms", "max_latency_ms", "underrun_rate", "mean_first_token_latency_ms", "mean_total_generation_ms"], 10))
+    latency_lines.extend(base.report_table(latency_summary_condition, ["condition", "sample_count", "mean_first_event_readiness_lower_bound_ms", "p50_first_event_readiness_lower_bound_ms", "p95_first_event_readiness_lower_bound_ms", "p99_first_event_readiness_lower_bound_ms", "max_first_event_readiness_lower_bound_ms", "startup_deadline_miss_rate", "mean_first_generated_event_latency_ms", "mean_total_generation_ms"], 10))
     latency_lines.extend(["", "## Preload Comparison", ""])
-    latency_lines.extend(base.report_table(preload_rows, ["comparison", "paired_sample_count", "mean_latency_reduction_ms", "ci95_low", "ci95_high", "positive_pairs", "negative_pairs", "tied_pairs", "p_two_sided_sign_test"], 10))
+    latency_lines.extend(base.report_table(preload_rows, ["comparison", "paired_sample_count", "mean_readiness_lower_bound_reduction_ms", "positive_pairs", "negative_pairs", "tied_pairs", "inference"], 10))
     (output_dir / "latency_report.md").write_text("\n".join(latency_lines) + "\n", encoding="utf-8")
 
 
@@ -906,15 +993,24 @@ def write_all_outputs(args: argparse.Namespace, presets: Sequence[str], variants
         row["rank"] = idx
     module_rows = module_contributions(rows, presets, variants, args.bootstrap_iterations)
     validation = validate_rows(rows, manifest, presets, variants, args.trials)
-    write_csv(output_dir / "ablation_summary_by_variant.csv", variant_summary)
-    write_csv(output_dir / "ablation_summary_by_preset_variant.csv", preset_variant_summary)
-    write_csv(output_dir / "ablation_leaderboard.csv", leaderboard)
+    def descriptive_only(summary_rows: Sequence[Dict[str, object]]) -> List[Dict[str, object]]:
+        return [
+            {
+                **{key: value for key, value in row.items() if not key.startswith("ci95_")},
+                "inference_scope": "descriptive repeated rows; use results/paper_clustered_statistics for uncertainty",
+            }
+            for row in summary_rows
+        ]
+
+    write_csv(output_dir / "ablation_summary_by_variant.csv", descriptive_only(variant_summary))
+    write_csv(output_dir / "ablation_summary_by_preset_variant.csv", descriptive_only(preset_variant_summary))
+    write_csv(output_dir / "ablation_leaderboard.csv", descriptive_only(leaderboard))
     write_csv(output_dir / "ablation_module_contribution.csv", module_rows)
     (output_dir / "ablation_validation_summary.json").write_text(json.dumps(validation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     latency_events = read_latency_jsonl(output_dir / "latency_events.jsonl")
     write_csv(output_dir / "latency_events.csv", latency_events)
-    latency_trials = build_latency_trials(output_dir, args.preload_window_ms, args.micro_buffer_ms, args.underrun_deadline_ms)
+    latency_trials = build_latency_trials(output_dir, args.preload_window_ms, args.startup_target_ms)
     write_csv(output_dir / "latency_log_all_trials.csv", latency_trials, LATENCY_FIELDS)
     latency_by_condition = latency_summary(latency_trials, ["condition"])
     latency_by_length = latency_summary(latency_trials, ["condition", "length_bin"])
@@ -930,15 +1026,26 @@ def write_all_outputs(args: argparse.Namespace, presets: Sequence[str], variants
     chart_latency_table(latency_by_condition, chart_dir)
     chart_length_scatter(latency_trials, chart_dir)
 
-    write_reports(output_dir, presets, variants, validation, variant_summary, module_rows, latency_by_condition, preload_rows, args.preload_window_ms)
+    write_reports(
+        output_dir,
+        presets,
+        variants,
+        validation,
+        variant_summary,
+        module_rows,
+        latency_by_condition,
+        preload_rows,
+        args.preload_window_ms,
+        args.startup_target_ms,
+    )
     return validation
 
 
 def write_plan(output_dir: Path, args: argparse.Namespace, presets: Sequence[str], variants: Sequence[str]) -> None:
     plan = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "manifest": args.manifest,
-        "output_dir": str(output_dir),
+        "manifest": provenance_label(Path(args.manifest)),
+        "output_dir": provenance_label(output_dir),
         "trials": args.trials,
         "seed": args.seed,
         "presets": list(presets),
@@ -946,8 +1053,8 @@ def write_plan(output_dir: Path, args: argparse.Namespace, presets: Sequence[str
         "latency": {
             "conditions": ["L0_preload_off", "L1_preload_on"],
             "preload_window_ms": args.preload_window_ms,
-            "micro_buffer_ms": args.micro_buffer_ms,
-            "underrun_deadline_ms": args.underrun_deadline_ms,
+            "startup_target_ms": args.startup_target_ms,
+            "startup_policy": "commit-anchored max(B, C1-H)",
         },
     }
     (output_dir / "experiment_design.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -978,14 +1085,35 @@ def build_parser() -> argparse.ArgumentParser:
             "consistent with live_call_response.py --endpoint-confirm-delay"
         ),
     )
-    parser.add_argument("--micro-buffer-ms", type=float, default=80.0)
-    parser.add_argument("--underrun-deadline-ms", type=float, default=80.0)
+    parser.add_argument(
+        "--startup-target-ms",
+        type=float,
+        default=80.0,
+        help="commit-anchored target B used by max(B, C1-H)",
+    )
     return parser
+
+
+def ensure_force_output_safe(output_dir: Path) -> None:
+    """Reject destructive targets that are roots or contain important roots."""
+
+    resolved = output_dir.resolve()
+    protected = (Path(resolved.anchor).resolve(), Path.home().resolve(), ROOT.resolve())
+    if any(resolved == target or resolved in target.parents for target in protected):
+        raise SystemExit(f"Refusing --force for protected output directory: {resolved}")
+    if (resolved / ".git").exists():
+        raise SystemExit(f"Refusing --force for Git repository root: {resolved}")
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    output_dir = Path(args.output_dir)
+    if args.preload_window_ms < 0:
+        raise SystemExit("--preload-window-ms cannot be negative")
+    if args.startup_target_ms <= 0:
+        raise SystemExit("--startup-target-ms must be positive")
+    output_dir = Path(args.output_dir).resolve()
+    if args.force:
+        ensure_force_output_safe(output_dir)
     if args.force and output_dir.exists() and not args.aggregate_only:
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
