@@ -7,6 +7,8 @@ non-neural motif path is not selectable during performance. It rescues an empty
 AMT response or supplies a bounded tail after AMT has already established the
 reply; it can never outnumber the streamed AMT events in a partial completion.
 
+[Watch the recorded Live Studio + MiniLab 3 + Logic Pro demonstration](https://mickeywzt.github.io/real-time-midi-call-response/assets/live-midi-call-response-demo.mp4).
+
 ## Research boundary
 
 This optional studio is a runtime extension outside the v1.2.0 paper evidence.

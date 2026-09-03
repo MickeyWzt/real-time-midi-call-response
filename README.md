@@ -10,6 +10,12 @@ This repository wraps an offline autoregressive symbolic-music Transformer for l
 
 The repository is published through GitHub Pages and archived on Zenodo. GitHub release [v1.2.0](https://github.com/MickeyWzt/real-time-midi-call-response/releases/tag/v1.2.0) and immutable DOI [10.5281/zenodo.22241768](https://doi.org/10.5281/zenodo.22241768) identify this revision; the stable all-versions concept DOI is [10.5281/zenodo.20838083](https://doi.org/10.5281/zenodo.20838083).
 
+## Live Demo
+
+[![Watch the live MIDI call-and-response demo](docs/assets/live-midi-call-response-demo.jpg)](https://mickeywzt.github.io/real-time-midi-call-response/assets/live-midi-call-response-demo.mp4)
+
+[Watch the 3:23 demonstration video](https://mickeywzt.github.io/real-time-midi-call-response/assets/live-midi-call-response-demo.mp4), showing the local Live Studio, a MiniLab 3 physical MIDI keyboard, and Logic Pro routing. This is a performance demonstration, not additional paper-evaluation evidence.
+
 ## Paper Summary
 
 The paper asks what an inspectable deployment layer adds to a frozen autoregressive Transformer for turn-based MIDI interaction. The implementation combines:

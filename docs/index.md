@@ -8,6 +8,17 @@ Code, paper, and verified summary outputs for **Adapting a Frozen Anticipatory M
 
 ![System overview](../paper/System_overview.png)
 
+## Live Performance Demo
+
+<video controls preload="metadata" poster="assets/live-midi-call-response-demo.jpg" style="width: 100%; max-width: 960px; border-radius: 12px;">
+  <source src="assets/live-midi-call-response-demo.mp4" type="video/mp4">
+  Your browser does not support embedded video. <a href="assets/live-midi-call-response-demo.mp4">Open the MP4 directly.</a>
+</video>
+
+The 3:23 recording shows the local Live Studio, a MiniLab 3 physical MIDI keyboard, and Logic Pro routing. It documents a working performance setup; it is not additional paper-evaluation evidence.
+
+[Open or download the demonstration video](assets/live-midi-call-response-demo.mp4)
+
 ## What This Project Does
 
 The system adapts an offline Anticipatory Music Transformer to live MIDI co-performance. It listens to a human call phrase, detects the phrase endpoint with MIDI-VAD logic, generates an AI response, applies phrase-level control, and schedules MIDI playback with a latency-aware buffer.
